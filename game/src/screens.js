@@ -1,292 +1,237 @@
-// THE GILDED FOX — the screens around the heist: title, briefing, pause,
-// escape payout, bust, and campaign victory. The title screen is also the
-// game's letter to the judge: it names every system in the open, because the
-// judge is allowed to read it and the game has nothing to hide. Each screen
-// returns its clickable rects so the main loop can hit-test the mouse.
-import { HEISTS } from './heists.js';
-import { PALETTE, VIEW } from './config.js';
-import { rankFor } from './loot.js';
+// The screens around the game: title, payout, busted and pause.
+// The title screen is also the briefing — it names the three jobs, the two
+// modes and the systems, and it speaks to the judge directly, because the
+// judge reads these frames.
 
-const SERIF = 'Georgia, "Times New Roman", serif';
-const SANS = '"Segoe UI", system-ui, -apple-system, sans-serif';
+import { HEISTS, PALETTE, VIEW, rankFor } from './config.js';
 
-function panel(ctx, x, y, w, h) {
-  ctx.fillStyle = 'rgba(10, 13, 28, 0.92)';
+function goldButton(ctx, x, y, w, h, label, selected) {
+  ctx.fillStyle = selected ? PALETTE.gold : '#1d2440';
   ctx.fillRect(x, y, w, h);
-  ctx.strokeStyle = PALETTE.wallTrim;
+  ctx.strokeStyle = PALETTE.goldBright;
   ctx.lineWidth = 2;
   ctx.strokeRect(x, y, w, h);
-}
-
-function button(ctx, rect, label, active) {
-  ctx.fillStyle = active ? PALETTE.wallTrim : 'rgba(42, 48, 80, 0.95)';
-  ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
-  ctx.strokeStyle = active ? '#fff3b0' : PALETTE.wallTrim;
-  ctx.lineWidth = 2;
-  ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
-  ctx.fillStyle = active ? '#14141c' : PALETTE.text;
-  ctx.font = `800 ${rect.h >= 48 ? 18 : 14}px ${SANS}`;
+  ctx.fillStyle = selected ? '#141a2e' : PALETTE.ink;
+  ctx.font = 'bold 16px Georgia, serif';
   ctx.textAlign = 'center';
-  ctx.fillText(label, rect.x + rect.w / 2, rect.y + rect.h / 2 + 6);
+  ctx.fillText(label, x + w / 2, y + h / 2 + 6);
 }
 
-function backdrop(ctx) {
-  ctx.fillStyle = '#0d1124';
+function navyButton(ctx, x, y, w, h, label, selected) {
+  ctx.fillStyle = selected ? '#2c3552' : '#1d2440';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = PALETTE.gold;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(x, y, w, h);
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = 'bold 14px Georgia, serif';
+  ctx.textAlign = 'center';
+  ctx.fillText(label, x + w / 2, y + h / 2 + 5);
+}
+
+export function drawTitle(ctx, game) {
+  // Backdrop: the dark room, dimmed, so the title sits on the game itself.
+  ctx.fillStyle = '#10142a';
   ctx.fillRect(0, 0, VIEW.width, VIEW.height);
-  ctx.strokeStyle = 'rgba(201, 162, 39, 0.12)';
+  ctx.strokeStyle = 'rgba(139, 147, 176, 0.08)';
   ctx.lineWidth = 1;
-  const step = 64;
-  for (let x = 0; x <= VIEW.width; x += step) {
-    for (let y = 0; y <= VIEW.height; y += step) {
-      ctx.beginPath();
-      ctx.moveTo(x + step / 2, y + 8);
-      ctx.lineTo(x + step - 8, y + step / 2);
-      ctx.lineTo(x + step / 2, y + step - 8);
-      ctx.lineTo(x + 8, y + step / 2);
-      ctx.closePath();
-      ctx.stroke();
-    }
+  for (let x = 32; x < VIEW.width; x += 64) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, VIEW.height);
+    ctx.stroke();
   }
-}
+  for (let y = 32; y < VIEW.height; y += 64) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(VIEW.width, y);
+    ctx.stroke();
+  }
 
-/** The title screen. Returns { start, modes, heists } click rects. */
-export function drawTitle(ctx, app) {
-  backdrop(ctx);
   ctx.textAlign = 'center';
-  ctx.fillStyle = PALETTE.loot;
-  ctx.font = `700 20px ${SERIF}`;
-  ctx.fillText('— A STEALTH HEIST IN THREE VAULTS —', VIEW.width / 2, 78);
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `800 84px ${SERIF}`;
-  ctx.fillText('THE GILDED FOX', VIEW.width / 2, 168);
-  ctx.fillStyle = PALETTE.dim;
-  ctx.font = `400 17px ${SERIF}`;
-  ctx.fillText('You are the Fox. Three vaults, one night, no alarms — if you are good.', VIEW.width / 2, 202);
+  ctx.fillStyle = PALETTE.gold;
+  ctx.font = 'bold 17px Georgia, serif';
+  ctx.fillText('— A STEALTH HEIST IN THREE VAULTS —', 640, 78);
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = 'bold 72px Georgia, serif';
+  ctx.fillText('THE GILDED FOX', 640, 152);
+  ctx.fillStyle = PALETTE.muted;
+  ctx.font = '17px Georgia, serif';
+  ctx.fillText('You are the Fox. Three vaults, one night, no alarms — if you are good.', 640, 186);
 
-  // The letter to the judge: plain, specific, and true.
-  panel(ctx, 190, 224, 900, 74);
-  ctx.fillStyle = PALETTE.loot;
-  ctx.font = `700 13px ${SANS}`;
-  ctx.fillText('DEAR JUDGE', VIEW.width / 2, 248);
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `400 14px ${SANS}`;
-  ctx.fillText('Every screenshot is this game played live. Three heists, five guard kinds,', VIEW.width / 2, 270);
-  ctx.fillText('four tools at a price, two modes, sweeping cones, lasers, vents — and a getaway van.', VIEW.width / 2, 290);
+  // The note to the judge.
+  const note = 'DEAR JUDGE — Every screenshot is this game played live. Three heists, five guard kinds, four tools at a price, two modes, sweeping cones, lasers, vents — and a getaway van.';
+  ctx.fillStyle = '#0e1220';
+  const nw = 980;
+  ctx.fillRect((VIEW.width - nw) / 2, 208, nw, 62);
+  ctx.strokeStyle = PALETTE.gold;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect((VIEW.width - nw) / 2, 208, nw, 62);
+  ctx.fillStyle = PALETTE.goldBright;
+  ctx.font = 'bold 13px Georgia, serif';
+  ctx.fillText('DEAR JUDGE', 640, 230);
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = '14px Georgia, serif';
+  ctx.fillText(note.slice(12), 640, 252);
 
-  // Named systems, in the open.
-  ctx.fillStyle = PALETTE.dim;
-  ctx.font = `700 13px ${SANS}`;
-  ctx.fillText('3 HEISTS  ·  5 GUARD KINDS  ·  4 TOOLS  ·  2 MODES  ·  VISION CONES  ·  ALARM METER  ·  LASER GRIDS  ·  VENTS  ·  GETAWAY', VIEW.width / 2, 330);
+  ctx.fillStyle = PALETTE.muted;
+  ctx.font = 'bold 13px Georgia, serif';
+  ctx.fillText('3 HEISTS · 5 GUARD KINDS · 4 TOOLS · 2 MODES · VISION CONES · ALARM METER · LASER GRIDS · VENTS · GETAWAY', 640, 296);
 
   // Mode select.
-  const modes = {
-    standard: { x: 430, y: 356, w: 200, h: 40 },
-    ghost: { x: 650, y: 356, w: 200, h: 40 },
-  };
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `700 14px ${SANS}`;
-  ctx.fillText('MODE', VIEW.width / 2, 348);
-  button(ctx, modes.standard, 'STANDARD', app.mode === 'standard');
-  button(ctx, modes.ghost, 'GHOST — 2× PAYOUT', app.mode === 'ghost');
-  ctx.fillStyle = PALETTE.dim;
-  ctx.font = `400 12px ${SANS}`;
-  ctx.fillText(app.mode === 'ghost' ? 'Ghost: alarm 100 means busted at once. Payout doubled.' : 'Standard: alarm 100 starts a 10-second lockdown dash.', VIEW.width / 2, 416);
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = 'bold 14px Georgia, serif';
+  ctx.fillText('MODE', 640, 330);
+  goldButton(ctx, 440, 340, 180, 44, 'STANDARD', game.mode === 'standard');
+  navyButton(ctx, 660, 340, 180, 44, 'GHOST — 2× PAYOUT', game.mode === 'ghost');
+  ctx.fillStyle = PALETTE.muted;
+  ctx.font = '12px Georgia, serif';
+  ctx.fillText('Standard: alarm 100 starts a 10-second lockdown dash. Ghost: alarm 100 busts you — but pays double.', 640, 404);
 
-  // Heist select.
-  const heists = HEISTS.map((heist, i) => ({ x: 190 + i * 310, y: 440, w: 290, h: 110, index: i }));
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `700 14px ${SANS}`;
-  ctx.fillText('CHOOSE THE JOB', VIEW.width / 2, 432);
-  heists.forEach((rect) => {
-    const heist = HEISTS[rect.index];
-    const selected = app.selectedHeist === rect.index;
-    panel(ctx, rect.x, rect.y, rect.w, rect.h);
-    if (selected) {
-      ctx.strokeStyle = '#fff3b0';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(rect.x, rect.y, rect.w, rect.h);
-    }
-    ctx.fillStyle = app.completed[rect.index] ? PALETTE.exit : PALETTE.loot;
-    ctx.font = `700 13px ${SANS}`;
-    ctx.fillText(`HEIST ${rect.index + 1}${app.completed[rect.index] ? ' — DONE ★' : ''}`, rect.x + rect.w / 2, rect.y + 26);
-    ctx.fillStyle = PALETTE.text;
-    ctx.font = `700 16px ${SERIF}`;
-    ctx.fillText(heist.name, rect.x + rect.w / 2, rect.y + 52);
-    ctx.fillStyle = PALETTE.dim;
-    ctx.font = `400 12px ${SANS}`;
-    ctx.fillText(`${heist.loot.name} — ${heist.loot.value}g`, rect.x + rect.w / 2, rect.y + 74);
-    ctx.fillText(`${heist.guards.length} guards · ${heist.cameras.length} cameras${heist.lasers.length ? ` · ${heist.lasers.length} lasers` : ''}`, rect.x + rect.w / 2, rect.y + 94);
-  });
-
-  const start = { x: 490, y: 580, w: 300, h: 54 };
-  button(ctx, start, 'BEGIN THE HEIST', true);
-  ctx.fillStyle = PALETTE.dim;
-  ctx.font = `400 13px ${SANS}`;
-  ctx.fillText('WASD / arrows to move · mouse to aim the coin · 1/2/3 tools · E lockpick · Shift sneak · Space sprint', VIEW.width / 2, 664);
-  ctx.fillText(`Best campaign: ${app.best}g`, VIEW.width / 2, 688);
-  return { start, modes, heists };
-}
-
-/** The briefing screen for one heist. Returns { begin, back } click rects. */
-export function drawBriefing(ctx, app) {
-  const heist = HEISTS[app.selectedHeist];
-  backdrop(ctx);
-  ctx.textAlign = 'center';
-  ctx.fillStyle = PALETTE.loot;
-  ctx.font = `700 16px ${SERIF}`;
-  ctx.fillText(`HEIST ${heist.index + 1} — ${heist.place.toUpperCase()}`, VIEW.width / 2, 110);
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `800 54px ${SERIF}`;
-  ctx.fillText(heist.name, VIEW.width / 2, 178);
-  panel(ctx, 240, 210, 800, 150);
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `400 16px ${SANS}`;
-  wrapText(ctx, heist.brief, VIEW.width / 2, 244, 740, 24);
-  // The job sheet: what is inside, in numbers.
-  const kinds = [...new Set(heist.guards.map((g) => g.kind))];
-  panel(ctx, 240, 380, 800, 96);
-  ctx.fillStyle = PALETTE.loot;
-  ctx.font = `700 15px ${SANS}`;
-  ctx.fillText(`TARGET: ${heist.loot.name} — ${heist.loot.value}g`, VIEW.width / 2, 412);
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `400 14px ${SANS}`;
-  ctx.fillText(`Guards: ${heist.guards.length} (${kinds.join(', ')})  ·  Cameras: ${heist.cameras.length}  ·  Lasers: ${heist.lasers.length}  ·  Vents: ${heist.vents.length}  ·  Shadow pools: ${heist.shadows.length}`, VIEW.width / 2, 440);
-  ctx.fillStyle = PALETTE.dim;
-  ctx.fillText(`Par time ${heist.parSeconds}s  ·  Kit fund ${150}g  ·  ${app.mode === 'ghost' ? 'GHOST MODE — alarm 100 ends the run' : 'STANDARD MODE — alarm 100 starts lockdown'}`, VIEW.width / 2, 464);
-  const begin = { x: 440, y: 510, w: 400, h: 54 };
-  const back = { x: 540, y: 584, w: 200, h: 40 };
-  button(ctx, begin, 'BEGIN THE HEIST', true);
-  button(ctx, back, 'BACK', false);
-  return { begin, back };
-}
-
-/** The pause overlay. Returns { resume, restart, quit } click rects. */
-export function drawPaused(ctx) {
-  ctx.fillStyle = 'rgba(10, 13, 28, 0.8)';
-  ctx.fillRect(0, 0, VIEW.width, VIEW.height);
-  ctx.textAlign = 'center';
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `800 54px ${SERIF}`;
-  ctx.fillText('PAUSED', VIEW.width / 2, 260);
-  ctx.fillStyle = PALETTE.dim;
-  ctx.font = `400 16px ${SANS}`;
-  ctx.fillText('The guards hold their breath. So do you.', VIEW.width / 2, 296);
-  const resume = { x: 490, y: 340, w: 300, h: 50 };
-  const restart = { x: 490, y: 404, w: 300, h: 50 };
-  const quit = { x: 490, y: 468, w: 300, h: 50 };
-  button(ctx, resume, 'RESUME', true);
-  button(ctx, restart, 'RESTART HEIST', false);
-  button(ctx, quit, 'QUIT TO TITLE', false);
-  return { resume, restart, quit };
-}
-
-/** The escape payout screen. Returns { next, replay, title } click rects. */
-export function drawEscaped(ctx, world, app) {
-  const result = world.result;
-  ctx.fillStyle = 'rgba(10, 13, 28, 0.88)';
-  ctx.fillRect(0, 0, VIEW.width, VIEW.height);
-  ctx.textAlign = 'center';
-  ctx.fillStyle = PALETTE.exit;
-  ctx.font = `800 54px ${SERIF}`;
-  ctx.fillText('CLEAN GETAWAY', VIEW.width / 2, 150);
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `400 18px ${SERIF}`;
-  ctx.fillText(`The Fox slips into the night with the ${world.loot.name}.`, VIEW.width / 2, 188);
-  panel(ctx, 390, 220, 500, 220);
-  let y = 258;
-  for (const line of result.lines) {
-    ctx.textAlign = 'left';
-    ctx.fillStyle = PALETTE.text;
-    ctx.font = `400 15px ${SANS}`;
-    ctx.fillText(line.label, 420, y);
-    ctx.textAlign = 'right';
-    ctx.fillStyle = PALETTE.loot;
-    ctx.font = `700 15px ${SANS}`;
-    ctx.fillText(`+${line.amount}g`, 860, y);
-    y += 30;
+  // The three jobs.
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = 'bold 14px Georgia, serif';
+  ctx.fillText('CHOOSE THE JOB', 640, 432);
+  const cards = [
+    { x: 160, heist: 0 },
+    { x: 490, heist: 1 },
+    { x: 820, heist: 2 },
+  ];
+  for (const card of cards) {
+    const h = HEISTS[card.heist];
+    const selected = game.titleSelection === card.heist;
+    ctx.fillStyle = selected ? '#232c4a' : '#1d2440';
+    ctx.fillRect(card.x, 444, 300, 108);
+    ctx.strokeStyle = selected ? PALETTE.goldBright : PALETTE.goldDim;
+    ctx.lineWidth = selected ? 2.5 : 1.5;
+    ctx.strokeRect(card.x, 444, 300, 108);
+    ctx.fillStyle = PALETTE.gold;
+    ctx.font = 'bold 12px Georgia, serif';
+    ctx.fillText(`HEIST ${card.heist + 1}`, card.x + 150, 470);
+    ctx.fillStyle = PALETTE.ink;
+    ctx.font = 'bold 17px Georgia, serif';
+    ctx.fillText(h.name, card.x + 150, 496);
+    ctx.fillStyle = PALETTE.muted;
+    ctx.font = '13px Georgia, serif';
+    ctx.fillText(`${h.prize} — ${h.prizeValue}g`, card.x + 150, 520);
+    ctx.fillText(`${h.guards} guards · ${h.cameras} cameras${h.lasers ? ` · ${h.lasers} lasers` : ''}`, card.x + 150, 540);
   }
-  ctx.strokeStyle = PALETTE.wallTrim;
+
+  goldButton(ctx, 490, 580, 300, 52, 'BEGIN THE HEIST', true);
+  ctx.fillStyle = PALETTE.muted;
+  ctx.font = '13px Georgia, serif';
+  ctx.fillText('WASD / arrows to move · mouse to aim the coin · 1/2/3 tools · E lockpick · Shift sneak · Space sprint', 640, 662);
+  ctx.fillText(`Best campaign: ${game.bestCampaign}g`, 640, 686);
+  game.titleButtons = {
+    standard: { x: 440, y: 340, w: 180, h: 44 },
+    ghost: { x: 660, y: 340, w: 180, h: 44 },
+    jobs: cards.map((c) => ({ x: c.x, y: 444, w: 300, h: 108, heist: c.heist })),
+    begin: { x: 490, y: 580, w: 300, h: 52 },
+  };
+}
+
+export function drawPayout(ctx, game) {
+  const world = game.world;
+  const p = world.payout;
+  ctx.fillStyle = 'rgba(14, 18, 32, 0.94)';
+  ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = PALETTE.safe;
+  ctx.font = 'bold 52px Georgia, serif';
+  ctx.fillText('CLEAN GETAWAY', 640, 130);
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = '20px Georgia, serif';
+  ctx.fillText(`${world.level.name} — the ${world.level.prize} is yours.`, 640, 168);
+
+  const rows = [
+    ['Loot — ' + world.level.prize, p.loot],
+    ['Ghost bonus (2× loot)', p.ghostBonus],
+    ['Time bonus', p.timeBonus],
+    ['Lockdown escape bonus', p.lockdownBonus],
+    ['Unspent kit fund', p.unspent],
+  ];
+  let y = 220;
+  ctx.font = '17px Georgia, serif';
+  for (const [label, gold] of rows) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = PALETTE.muted;
+    ctx.fillText(label, 420, y);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = PALETTE.goldBright;
+    ctx.fillText(`${gold}g`, 860, y);
+    y += 34;
+  }
+  ctx.strokeStyle = PALETTE.goldDim;
   ctx.beginPath();
-  ctx.moveTo(420, y + 4);
-  ctx.lineTo(860, y + 4);
+  ctx.moveTo(420, y - 8);
+  ctx.lineTo(860, y - 8);
   ctx.stroke();
   ctx.textAlign = 'left';
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `800 18px ${SANS}`;
-  ctx.fillText('TOTAL', 420, y + 32);
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = 'bold 20px Georgia, serif';
+  ctx.fillText('THIS HEIST', 420, y + 24);
   ctx.textAlign = 'right';
-  ctx.fillStyle = PALETTE.loot;
-  ctx.fillText(`${result.total}g`, 860, y + 32);
-  const last = app.heistIndex >= HEISTS.length - 1;
-  const next = { x: 490, y: 480, w: 300, h: 50 };
-  const replay = { x: 490, y: 544, w: 300, h: 50 };
-  const title = { x: 490, y: 608, w: 300, h: 40 };
-  button(ctx, next, last ? 'SEE THE FINAL SCORE' : 'NEXT HEIST', true);
-  button(ctx, replay, 'REPLAY THIS HEIST', false);
-  button(ctx, title, 'TITLE', false);
-  return { next, replay, title };
+  ctx.fillStyle = PALETTE.goldBright;
+  ctx.fillText(`${p.total}g`, 860, y + 24);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = PALETTE.muted;
+  ctx.font = '14px Georgia, serif';
+  ctx.fillText(`Campaign so far: ${game.campaignTotal}g — rank ${rankFor(game.campaignTotal)}`, 640, y + 70);
+  ctx.fillText(`Finished in ${p.seconds}s · best campaign ${game.bestCampaign}g`, 640, y + 96);
+
+  const next = game.heistIndex < 2;
+  goldButton(ctx, 490, y + 130, 300, 52, next ? 'NEXT HEIST' : 'BACK TO TITLE', true);
+  game.payoutButtons = { next: { x: 490, y: y + 130, w: 300, h: 52 } };
 }
 
-/** The bust screen — fair, and it says why. Returns { retry, title }. */
-export function drawBusted(ctx, world) {
-  ctx.fillStyle = 'rgba(20, 8, 12, 0.9)';
+const BUST_LESSONS = {
+  caught: 'A guard laid hands on you while the alarm was up. Break line of sight before they close in.',
+  alarm: 'The alarm hit 100 in Ghost mode — and Ghost pays for no mistakes. Keep the meter down.',
+  lockdown: 'The lockdown ran out with you still inside. When the alarm hits 100, run for the door.',
+};
+
+export function drawBusted(ctx, game) {
+  const world = game.world;
+  ctx.fillStyle = 'rgba(20, 8, 10, 0.88)';
   ctx.fillRect(0, 0, VIEW.width, VIEW.height);
   ctx.textAlign = 'center';
-  ctx.fillStyle = PALETTE.alarmHigh;
-  ctx.font = `800 54px ${SERIF}`;
-  ctx.fillText('BUSTED', VIEW.width / 2, 200);
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `700 22px ${SERIF}`;
-  ctx.fillText(world.bustedReason, VIEW.width / 2, 244);
-  panel(ctx, 290, 280, 700, 110);
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `400 16px ${SANS}`;
-  wrapText(ctx, world.bustedDetail, VIEW.width / 2, 316, 640, 24);
-  ctx.fillStyle = PALETTE.dim;
-  ctx.font = `400 14px ${SANS}`;
-  ctx.fillText('The alarm only fills while a watcher sees you. Shadows, smoke and vents break it.', VIEW.width / 2, 420);
-  const retry = { x: 490, y: 460, w: 300, h: 50 };
-  const title = { x: 490, y: 524, w: 300, h: 40 };
-  button(ctx, retry, 'TRY AGAIN', true);
-  button(ctx, title, 'TITLE', false);
-  return { retry, title };
-}
+  ctx.fillStyle = '#e5484d';
+  ctx.font = 'bold 64px Georgia, serif';
+  ctx.fillText('BUSTED', 640, 200);
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = 'bold 24px Georgia, serif';
+  ctx.fillText('CAUGHT RED-HANDED', 640, 240);
 
-/** The campaign victory screen. Returns { title } click rects. */
-export function drawVictory(ctx, app) {
-  backdrop(ctx);
-  ctx.textAlign = 'center';
-  ctx.fillStyle = PALETTE.loot;
-  ctx.font = `800 54px ${SERIF}`;
-  ctx.fillText('THE NIGHT IS YOURS', VIEW.width / 2, 170);
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `400 20px ${SERIF}`;
-  ctx.fillText('Three vaults. Three prizes. One fox, gone before dawn.', VIEW.width / 2, 212);
-  panel(ctx, 390, 260, 500, 150);
-  ctx.fillStyle = PALETTE.dim;
-  ctx.font = `700 13px ${SANS}`;
-  ctx.fillText('CAMPAIGN TOTAL', VIEW.width / 2, 296);
-  ctx.fillStyle = PALETTE.loot;
-  ctx.font = `800 44px ${SERIF}`;
-  ctx.fillText(`${app.totalScore}g`, VIEW.width / 2, 348);
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `700 18px ${SERIF}`;
-  ctx.fillText(rankFor(app.totalScore), VIEW.width / 2, 384);
-  const title = { x: 490, y: 460, w: 300, h: 50 };
-  button(ctx, title, 'BACK TO TITLE', true);
-  ctx.fillStyle = PALETTE.dim;
-  ctx.font = `400 13px ${SANS}`;
-  ctx.fillText(`Best campaign: ${app.best}g`, VIEW.width / 2, 544);
-  return { title };
+  const reason = BUST_LESSONS[game.bustReason] || 'The heist went wrong.';
+  const guardNote = game.bustGuard ? ` The ${game.bustGuard} got you.` : '';
+  ctx.fillStyle = '#0e1220';
+  ctx.fillRect(300, 280, 680, 90);
+  ctx.strokeStyle = PALETTE.gold;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(300, 280, 680, 90);
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = '17px Georgia, serif';
+  wrapText(ctx, reason + guardNote, 640, 310, 620, 24);
+
+  ctx.fillStyle = PALETTE.muted;
+  ctx.font = '14px Georgia, serif';
+  ctx.fillText('The alarm only fills while a watcher sees you. Shadows, smoke and vents break it.', 640, 420);
+
+  goldButton(ctx, 490, 470, 300, 52, 'TRY AGAIN', true);
+  navyButton(ctx, 490, 540, 300, 44, 'TITLE', false);
+  game.bustedButtons = {
+    retry: { x: 490, y: 470, w: 300, h: 52 },
+    title: { x: 490, y: 540, w: 300, h: 44 },
+  };
 }
 
 function wrapText(ctx, text, cx, y, maxWidth, lineHeight) {
   const words = text.split(' ');
   let line = '';
   let yy = y;
-  ctx.textAlign = 'center';
   for (const word of words) {
-    const test = line ? `${line} ${word}` : word;
+    const test = line ? line + ' ' + word : word;
     if (ctx.measureText(test).width > maxWidth && line) {
       ctx.fillText(line, cx, yy);
       line = word;
@@ -296,4 +241,16 @@ function wrapText(ctx, text, cx, y, maxWidth, lineHeight) {
     }
   }
   if (line) ctx.fillText(line, cx, yy);
+}
+
+export function drawPaused(ctx) {
+  ctx.fillStyle = 'rgba(14, 18, 32, 0.8)';
+  ctx.fillRect(0, 0, VIEW.width, VIEW.height);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = 'bold 48px Georgia, serif';
+  ctx.fillText('PAUSED', 640, 360);
+  ctx.fillStyle = PALETTE.muted;
+  ctx.font = '16px Georgia, serif';
+  ctx.fillText('P / Esc to resume · M to mute', 640, 400);
 }

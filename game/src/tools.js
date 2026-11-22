@@ -1,55 +1,55 @@
-// THE GILDED FOX — the tool belt. Four tools, each with a price in gold from
-// the heist's kit fund — tools are a trade, not a freebie, and the fund you
-// do not spend scores at the getaway. Coin distracts, smoke hides, EMP blinds
-// the machines, and the lockpick opens the case (its price is time, standing
-// still in the open).
-import { PURSE_START, TOOLS } from './config.js';
+// Tools: the coin, the smoke pellet and the EMP pulse. Every tool costs
+// kit fund; the lockpick is free but costs time. Unspent fund pays out at
+// the end of the heist, so every throw is a real decision.
 
-/** A fresh tool state: the purse, live smoke clouds, and the coin in flight. */
-export function makeTools() {
-  return {
-    purse: PURSE_START,
-    smoke: [], // { x, y, radius, until }
-    coin: null, // { x, y, until } — the distraction point guards walk to
-    empUntil: 0,
-  };
-}
+import { TOOLS } from './config.js';
+import { distractGuards } from './guards.js';
+import { empBlast } from './cameras.js';
+import { dist } from './geometry.js';
 
-/** Spend `cost` from the purse when affordable; returns true on success. */
-export function spend(tools, cost) {
-  if (tools.purse < cost) return false;
-  tools.purse -= cost;
+// A tool use: { slot: 'coin'|'smoke'|'emp', x, y } where x,y is the aim
+// point for the coin. Returns true when the tool fired.
+export function useTool(world, slot, aimX, aimY) {
+  const tool = TOOLS[slot];
+  if (!tool) return false;
+  if (world.purse < tool.cost) {
+    world.banner = { text: 'NOT ENOUGH GOLD FOR THE ' + tool.name.toUpperCase(), until: world.time + 1.6 };
+    return false;
+  }
+  if (world.phase !== 'playing') return false;
+
+  world.purse -= tool.cost;
+  if (slot === 'coin') {
+    const tx = aimX === undefined ? world.thief.x + 60 : aimX;
+    const ty = aimY === undefined ? world.thief.y : aimY;
+    world.coins.push({ x: tx, y: ty, timer: 5 });
+    distractGuards(world, tx, ty);
+    world.events.push({ type: 'coin', x: tx, y: ty });
+  } else if (slot === 'smoke') {
+    world.smokes.push({
+      x: world.thief.x,
+      y: world.thief.y,
+      radius: tool.radius,
+      timer: tool.duration,
+    });
+    world.events.push({ type: 'smoke' });
+  } else if (slot === 'emp') {
+    empBlast(world, tool.duration);
+    world.events.push({ type: 'emp' });
+  }
   return true;
 }
 
-/** Throw a coin at (x, y): guards nearby walk over to look at it. */
-export function throwCoin(tools, x, y, time) {
-  if (!spend(tools, TOOLS.coin.cost)) return false;
-  tools.coin = { x, y, until: time + 5 };
-  return true;
+// Tick the thrown coins and smoke clouds down; a coin stops ringing after
+// its timer runs out.
+export function updateTools(world, dt) {
+  for (const coin of world.coins) coin.timer -= dt;
+  world.coins = world.coins.filter((c) => c.timer > 0);
+  for (const smoke of world.smokes) smoke.timer -= dt;
+  world.smokes = world.smokes.filter((s) => s.timer > 0);
 }
 
-/** Drop a smoke pellet at the thief: a cloud that blocks all vision. */
-export function dropSmoke(tools, x, y, time) {
-  if (!spend(tools, TOOLS.smoke.cost)) return false;
-  tools.smoke.push({ x, y, radius: TOOLS.smoke.radius, until: time + TOOLS.smoke.seconds });
-  return true;
-}
-
-/** Fire the EMP: cameras and drones go dark for a few seconds. */
-export function fireEmp(tools, time) {
-  if (!spend(tools, TOOLS.emp.cost)) return false;
-  tools.empUntil = time + TOOLS.emp.seconds;
-  return true;
-}
-
-/** Step the tools: expire old smoke and the coin's distraction. */
-export function updateTools(tools, time) {
-  tools.smoke = tools.smoke.filter((cloud) => time < cloud.until);
-  if (tools.coin && time >= tools.coin.until) tools.coin = null;
-}
-
-/** True when the EMP is still active at `time`. */
-export function empActive(tools, time) {
-  return time < tools.empUntil;
+// Is the thief inside a smoke cloud right now?
+export function thiefInSmoke(world) {
+  return world.smokes.some((s) => dist(world.thief.x, world.thief.y, s.x, s.y) < s.radius);
 }

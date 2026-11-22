@@ -1,164 +1,151 @@
-// THE GILDED FOX — the screenshot scenes behind ?shot=cover|briefing|
-// getaway|caught. Each one plays the real rules forward from a fresh world
-// with a scripted pilot (waypoints, sprint, lockpick), so the frame is what
-// a real game looks like at that moment — never posed, never composited —
-// and the same seed always stages the same frame.
-import { STEP } from './config.js';
-import { heistByIndex } from './heists.js';
-import { World, STATUS_BUSTED, STATUS_PLAYING } from './world.js';
-import { nearVault } from './loot.js';
-import { SCREEN_BUSTED, SCREEN_PLAY, SCREEN_TITLE } from './state.js';
+// The pilot: it plays the game for real and stages the four screenshots.
+// Each scene drives the simulation with scripted inputs — the same step()
+// the player runs — and stops at a chosen moment. No frame is posed by
+// hand: the alarm, the cones and the thief's position are whatever the
+// simulation produced when the pilot stopped.
 
-const IDLE = { dx: 0, dy: 0, sneak: false, sprint: false, interact: false, tool: null, toolTarget: null };
+import { laserLive } from './lasers.js';
+import { startHeist, recordBust } from './state.js';
+import { step } from './world.js';
 
-/** A pilot that walks a waypoint list, picking the lock when it reaches one. */
-class Pilot {
-  constructor(waypoints, options = {}) {
-    this.waypoints = waypoints;
-    this.index = 0;
-    this.sprint = options.sprint ?? false;
-    this.sprintWithLoot = options.sprintWithLoot ?? false;
-    this.pickLock = options.pickLock ?? false;
-    this.actions = options.actions ?? []; // [{ atIndex, tool, target }] fired once
-    this.firedActions = new Set();
-    this.lastX = null;
-    this.lastY = null;
-    this.stuckSteps = 0;
-    this.sidestepSide = 1;
-  }
+const DT = 1 / 60;
 
-  get done() {
-    return this.index >= this.waypoints.length;
-  }
+// A blank input, filled in by the driver each tick.
+function blankInput() {
+  return {
+    up: false, down: false, left: false, right: false,
+    sneak: false, sprint: false, pick: false,
+    tool: null, aimX: 0, aimY: 0,
+  };
+}
 
-  /** The input for this step, from the thief's current position. */
-  inputFor(world) {
-    const input = { ...IDLE, sprint: this.sprint || (this.sprintWithLoot && world.loot.taken) };
-    if (this.done) return input;
-    const thief = world.thief;
-    // Stuck against a wall corner: sidestep perpendicular to the goal until
-    // the way clears, then carry on. Keeps the pilot off furniture.
-    if (this.lastX !== null && Math.hypot(thief.x - this.lastX, thief.y - this.lastY) < 0.5) {
-      this.stuckSteps += 1;
-    } else {
-      this.stuckSteps = 0;
-    }
-    this.lastX = thief.x;
-    this.lastY = thief.y;
-    const [wx, wy] = this.waypoints[this.index];
-    const dx = wx - thief.x;
-    const dy = wy - thief.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist < 18) {
-      // Fire any tool action scheduled for this waypoint, once.
-      for (let i = 0; i < this.actions.length; i += 1) {
-        const action = this.actions[i];
-        if (action.atIndex === this.index && !this.firedActions.has(i)) {
-          this.firedActions.add(i);
-          input.tool = action.tool;
-          input.toolTarget = action.target ? { x: action.target[0], y: action.target[1] } : null;
-        }
-      }
-      this.index += 1;
-      this.stuckSteps = 0;
-      return input;
-    }
-    // At the vault with the lock to pick: stand still and hold E.
-    if (this.pickLock && !world.loot.caseOpen && nearVault(thief, world.heist)) {
-      input.interact = true;
-      return input;
-    }
-    if (this.stuckSteps > 30) {
-      // Slide sideways around the corner, then re-aim.
-      const px = -dy / dist;
-      const py = dx / dist;
-      input.dx = px * this.sidestepSide;
-      input.dy = py * this.sidestepSide;
-      if (this.stuckSteps > 90) {
-        this.sidestepSide *= -1;
-        this.stuckSteps = 0;
-      }
-      return input;
-    }
-    input.dx = dx / dist;
-    input.dy = dy / dist;
-    return input;
+// Steer the thief toward a point: set the movement keys from the delta.
+function steer(input, world, tx, ty) {
+  const t = world.thief;
+  const dx = tx - t.x;
+  const dy = ty - t.y;
+  input.left = dx < -6;
+  input.right = dx > 6;
+  input.up = dy < -6;
+  input.down = dy > 6;
+  return Math.abs(dx) < 10 && Math.abs(dy) < 10;
+}
+
+// Run the world for up to maxTicks, one scripted tick at a time. The
+// driver fills the input each tick and may stop early by returning 'stop'.
+function runScript(world, maxTicks, driver) {
+  for (let i = 0; i < maxTicks; i++) {
+    if (world.phase !== 'playing') break;
+    const input = blankInput();
+    const done = driver(input, i);
+    step(world, input, DT);
+    if (done === 'stop') break;
   }
 }
 
-function runPilot(world, pilot, maxSeconds) {
-  const steps = Math.round(maxSeconds / STEP);
-  for (let i = 0; i < steps; i += 1) {
-    world.step(STEP, pilot.inputFor(world));
-    if (world.status !== STATUS_PLAYING) break;
-    if (pilot.done) break;
-  }
+// Scene 1 — the bank vault mid-heist. The pilot slips up the left edge
+// (the captain never faces that way), walks along the floor below the
+// drone's line, waits for the first laser beam to open a fresh window, and
+// crosses it — the trip pushes the alarm to 30 — then holds below the vault
+// until the meter cools into a warm band.
+function stageCover(game) {
+  startHeist(game, 1, 'standard');
+  const world = game.world;
+  let phase = 'edge';
+  runScript(world, 3600, (input) => {
+    const beam = world.lasers[0];
+    if (phase === 'edge') {
+      // Up the left edge to just above the teller desks (y=487 clears
+      // their tops; y=500 would wedge the Fox against a desk corner).
+      const arrived = steer(input, world, 120, 487);
+      if (arrived) phase = 'floor';
+    } else if (phase === 'floor') {
+      const arrived = steer(input, world, 640, 487);
+      if (arrived) phase = 'wait-beam';
+    } else if (phase === 'wait-beam') {
+      // A fresh window: live, with most of its on-time still ahead, so the
+      // beam cannot switch off mid-crossing.
+      const intoCycle = beam.time % beam.period;
+      const remaining = beam.period * beam.onFraction - intoCycle;
+      if (laserLive(beam) && remaining > 0.8) phase = 'cross';
+    } else if (phase === 'cross') {
+      const arrived = steer(input, world, 640, 340);
+      if (arrived) phase = 'cool';
+    } else if (phase === 'cool') {
+      // Stop a touch early so the LASER TRIPPED banner is still on screen.
+      if (world.alarm <= 28) return 'stop';
+    }
+    return undefined;
+  });
 }
 
-/**
- * Stage the named scene and return { world, screen, app } ready to render.
- * Unknown names stage the cover. `seed` replays the same scene every time.
- */
-export function stageShot(name, seed = 1) {
-  if (name === 'briefing') {
-    return { world: null, screen: SCREEN_TITLE, app: null };
-  }
-  if (name === 'getaway') {
-    const world = new World(heistByIndex(0), 'standard', seed);
-    // Start -> vault (pick the case, grab the mask) -> sprint for the exit,
-    // stopping just short of the door with the alarm up and guards closing in.
-    // A coin tossed west pulls the patroller off the vault approach; the
-    // sprint starts only once the mask is in hand.
-    const pilot = new Pilot(
-      [
-        [300, 620],
-        [300, 380],
-        [500, 380],
-        [560, 200],
-        [640, 150],
-        [900, 300],
-        [1080, 520],
-        [1060, 640],
-      ],
-      {
-        sprintWithLoot: true,
-        pickLock: true,
-        actions: [{ atIndex: 2, tool: 'coin', target: [250, 250] }],
-      },
-    );
-    runPilot(world, pilot, 60);
-    // If the pilot got caught anyway, leave the frame as the escape attempt.
-    return { world, screen: world.status === STATUS_BUSTED ? SCREEN_BUSTED : SCREEN_PLAY, app: null };
-  }
-  if (name === 'caught') {
-    const world = new World(heistByIndex(0), 'standard', seed);
-    // Walk into the sentry's stare (around the statue) and stand there: the
-    // alarm fills, lockdown starts, and the building seals. A fair bust,
-    // fully earned.
-    const pilot = new Pilot([[640, 560], [560, 400], [640, 300]]);
-    runPilot(world, pilot, 30);
-    // Stand still in the cone until the bust lands (lockdown runs 10s).
-    const idleSteps = Math.round(40 / STEP);
-    for (let i = 0; i < idleSteps && world.status === STATUS_PLAYING; i += 1) {
-      world.step(STEP, IDLE);
-    }
-    return { world, screen: world.status === STATUS_BUSTED ? SCREEN_BUSTED : SCREEN_PLAY, app: null };
-  }
-  // Cover: the bank vault, mid-heist. The thief slips up the west vent,
-  // crosses the open floor under the cameras, clips a laser and the
-  // sentry's sweep edge on the way, and pauses inside the south-east
-  // shadow pool — the whole heist in one frame, alarm already warm.
-  const world = new World(heistByIndex(1), 'standard', seed);
-  const pilot = new Pilot([
-    [68, 560],
-    [68, 230],
-    [180, 200],
-    [400, 290],
-    [560, 250],
-    [680, 480],
-  ]);
-  runPilot(world, pilot, 45);
-  // A cover never shows an end screen: if the pilot escaped or was busted,
-  // the playfield still renders the moment honestly underneath.
-  return { world, screen: SCREEN_PLAY, app: null };
+// Scene 2 — the title screen: the three jobs, the two modes, the note to
+// the judge. No world is needed; the title paints itself.
+function stageBriefing(game) {
+  game.screen = 'title';
+  game.titleSelection = 1;
 }
+
+// Scene 3 — the gallery getaway. The pilot sneaks to the mask's case and
+// picks the lock from its left side (35px above the patroller's line, and
+// just outside the sentry's pan), then sprints for the exit and stops with
+// the door in view and the alarm warm.
+function stageGetaway(game) {
+  startHeist(game, 0, 'standard');
+  const world = game.world;
+  let phase = 'to-case';
+  runScript(world, 3600, (input) => {
+    const t = world.thief;
+    if (phase === 'to-case') {
+      const arrived = steer(input, world, 640, 360);
+      if (arrived) phase = 'up';
+    } else if (phase === 'up') {
+      const arrived = steer(input, world, 570, 190);
+      if (arrived) phase = 'side';
+    } else if (phase === 'side') {
+      const arrived = steer(input, world, 570, 145);
+      if (arrived) phase = 'pick';
+    } else if (phase === 'pick') {
+      input.pick = true;
+      if (world.lootSecured) phase = 'run';
+    } else if (phase === 'run') {
+      input.sprint = true;
+      // Steer past the exit door, not to it: stopping on the hound's line
+      // lets the hound close in while the pilot waits for a warm alarm.
+      steer(input, world, 640, 700);
+      if (t.y >= 560 && world.alarm >= 20 && world.alarm <= 70) return 'stop';
+      // Stop clear of the centre banner, so the Fox stays visible.
+      if (t.y >= 620) return 'stop';
+    }
+    return undefined;
+  });
+}
+
+// Scene 4 — caught red-handed. The pilot walks the Fox onto the gallery
+// patroller's line and stands there until the guard closes in, then shows
+// the busted screen (the main loop would do this live; the pilot does it
+// here because the screenshot renders a single frame).
+function stageCaught(game) {
+  startHeist(game, 0, 'standard');
+  const world = game.world;
+  let phase = 'to-line';
+  runScript(world, 3600, (input) => {
+    if (phase === 'to-line') {
+      const arrived = steer(input, world, 640, 180);
+      if (arrived) phase = 'wait';
+    }
+    return undefined;
+  });
+  if (world.phase === 'busted') recordBust(game);
+}
+
+export function stageShot(game, name) {
+  if (name === '1-cover') stageCover(game);
+  else if (name === '2-briefing') stageBriefing(game);
+  else if (name === '3-getaway') stageGetaway(game);
+  else if (name === '4-caught') stageCaught(game);
+  else stageBriefing(game);
+}
+
+// The scenes the pilot can stage, in screenshot order.
+export const SHOT_NAMES = ['1-cover', '2-briefing', '3-getaway', '4-caught'];

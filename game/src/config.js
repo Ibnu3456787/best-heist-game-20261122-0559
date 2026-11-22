@@ -1,102 +1,157 @@
-// THE GILDED FOX — tuning constants. One file, one job: every number the
-// game balances on lives here, so a balance pass touches this file only.
-// The stage is a fixed 1280x720 canvas; the HUD takes the top 56 pixels
-// and the room fills the rest, so a single frame always shows the heist.
-export const VIEW = { width: 1280, height: 720, hudHeight: 56 };
+// Tuning, palette, guard kinds, tools and the heist table for
+// THE GILDED FOX. Every number the simulation uses lives here, so a balance
+// change is one edit and the tests can import the same constants the game
+// runs with.
 
-/** The playable room: inside the gold-trimmed outer wall, below the HUD. */
-export const ROOM = { minX: 24, minY: 64, maxX: 1256, maxY: 696 };
-
-export const STEP = 1 / 60; // fixed simulation step (seconds)
-
-export const THIEF = {
-  radius: 15,
-  walkSpeed: 205, // px/s
-  sneakSpeed: 120, // Shift: slower, harder to spot
-  sprintSpeed: 300, // Space: faster, easier to spot
-  sneakDetect: 0.7, // detection-range multiplier while sneaking
-  sprintDetect: 1.25, // detection-range multiplier while sprinting
-  sprintAlarm: 1.5, // alarm-fill multiplier while sprinting
+export const VIEW = {
+  width: 1280,
+  height: 800,
+  hudTop: 64,
+  hudBottom: 64,
 };
 
-// Vision cones, by watcher kind. Range is pixels; halfAngle is radians on
-// each side of the facing direction; fill is suspicion gained per second.
-export const SIGHT = {
-  patroller: { range: 195, halfAngle: 0.62, fill: 55 },
-  sentry: { range: 210, halfAngle: 0.55, fill: 60 },
-  captain: { range: 250, halfAngle: 0.6, fill: 85 },
-  hound: { range: 170, halfAngle: 0.75, fill: 70 },
-  drone: { range: 165, halfAngle: 0.9, fill: 65 },
-  camera: { range: 225, halfAngle: 0.5, fill: 45 },
-};
+// Playable room bounds: the outer walls sit just inside the HUD bars.
+export const ROOM = { x: 10, y: 74, w: 1260, h: 650 };
 
-export const GUARD = {
-  patrolSpeed: 78,
-  chaseSpeed: 165,
-  houndChaseSpeed: 235,
-  returnSpeed: 120,
-  suspicionDecay: 26, // per second while unseen
-  suspiciousAt: 30, // "?" — the guard pauses and stares
-  alertAt: 100, // "!" — the guard chases the last seen point
-  touchBust: 20, // px: an alert guard this close busts you
-  investigateSeconds: 4,
-  stareSeconds: 1.2,
-};
-
-export const CAMERA = {
-  sweepSeconds: 5, // one full sweep cycle
-  empSeconds: 8, // offline after an EMP pulse
-};
-
-export const ALARM = {
-  // Per-second rise while any watcher is suspicious / alert / camera-seeing.
-  suspiciousRise: 6,
-  alertRise: 22,
-  cameraRise: 14,
-  decay: 9, // per second while nobody sees you
-  laserTrip: 30, // instant spike for crossing a live laser
-  lockdownSeconds: 10, // countdown once the meter hits 100 (Standard)
-  ghostBonusAt: 25, // an alarm peak never above this earns the Ghost bonus
-};
-
-export const TOOLS = {
-  coin: { key: '1', name: 'Coin Toss', cost: 25, radius: 260, label: 'COIN' },
-  smoke: { key: '2', name: 'Smoke Pellet', cost: 50, radius: 95, seconds: 6, label: 'SMOKE' },
-  emp: { key: '3', name: 'EMP Pulse', cost: 100, seconds: 8, label: 'EMP' },
-  lockpickSeconds: 2.5,
-};
-
-export const PURSE_START = 150; // kit fund per heist; tools spend it, the rest scores
-export const TIME_BONUS_MAX = 300; // decays over the par time
-export const GHOST_BONUS = 500;
-export const LOCKDOWN_ESCAPE_BONUS = 150; // escaping during lockdown
-
-// Noir-neon palette: safe cover is cool blue, danger is red, loot is gold —
-// readable at a glance, which is the whole point of the look.
 export const PALETTE = {
-  floor: '#171c30',
-  floorAlt: '#1b2138',
-  wall: '#2a3050',
-  wallTrim: '#c9a227',
-  shadow: 'rgba(8, 12, 32, 0.55)',
-  shadowEdge: 'rgba(90, 140, 255, 0.25)',
-  coneGuard: 'rgba(255, 64, 64, 0.20)',
-  coneGuardEdge: 'rgba(255, 64, 64, 0.45)',
-  coneCamera: 'rgba(255, 170, 40, 0.16)',
-  coneCameraEdge: 'rgba(255, 170, 40, 0.4)',
-  coneAlert: 'rgba(255, 40, 40, 0.38)',
-  loot: '#ffd94a',
-  lootGlow: 'rgba(255, 217, 74, 0.35)',
-  thief: '#f4f1e8',
-  thiefCloak: '#232946',
-  guard: '#3b4a6b',
-  guardCap: '#1d2440',
-  hound: '#6b4a3b',
-  drone: '#8a93b2',
-  exit: '#37d67a',
-  text: '#f4f1e8',
-  dim: '#9aa3c0',
-  alarmLow: '#37d67a',
-  alarmMid: '#ffb020',
-  alarmHigh: '#ff4040',
+  floor: '#141a2e',
+  floorAlt: '#171e33',
+  wall: '#232c4a',
+  wallEdge: '#c9a227',
+  gold: '#c9a227',
+  goldBright: '#f2c94c',
+  goldDim: '#8a7420',
+  ink: '#e8e4d8',
+  muted: '#8b93b0',
+  danger: '#e5484d',
+  dangerDim: '#7a2b2e',
+  calm: '#e8a13c',
+  safe: '#39d98a',
+  shadow: '#2b3f6e',
+  vent: '#3a4668',
+  smoke: '#9aa3b8',
+  thief: '#ff9f2e',
+  guard: '#5b6b8c',
+  camera: '#7dd3a8',
 };
+
+// Movement speeds in pixels per second.
+export const SPEEDS = {
+  walk: 150,
+  sneak: 85,
+  sprint: 228,
+  vent: 60,
+};
+
+// The thief's collision radius.
+export const THIEF_RADIUS = 13;
+
+// How long the lockpick takes while standing still at the case.
+export const LOCKPICK_SECONDS = 2.5;
+
+// Alarm meter: 0..100.
+export const ALARM = {
+  // Alarm gained per second while any watcher sees the thief.
+  risePerSecond: 7,
+  // Alarm lost per second while nobody sees the thief.
+  decayPerSecond: 4,
+  // Alarm added when a live laser beam is tripped.
+  laserTrip: 30,
+  // Standard mode: seconds to reach the exit once the alarm hits 100.
+  lockdownSeconds: 10,
+};
+
+// The five guard kinds. Range is sight distance in pixels, cone is the
+// half-angle in radians, suspicion is how fast the meter fills per second
+// at point blank, chase is the pursuit speed.
+export const GUARD_KINDS = {
+  patroller: {
+    label: 'Patroller', speed: 56, range: 195, cone: 0.61,
+    suspicion: 34, chase: 128, color: '#5b6b8c',
+  },
+  sentry: {
+    label: 'Sentry', speed: 42, range: 235, cone: 0.52,
+    suspicion: 48, chase: 110, color: '#7a6a9c',
+  },
+  captain: {
+    label: 'Captain', speed: 72, range: 215, cone: 0.66,
+    suspicion: 55, chase: 148, color: '#c25e4b',
+  },
+  hound: {
+    label: 'Hound', speed: 96, range: 155, cone: 0.79,
+    suspicion: 60, chase: 178, color: '#4b8c6a',
+  },
+  drone: {
+    label: 'Drone', speed: 66, range: 205, cone: 0.57,
+    suspicion: 40, chase: 138, color: '#4b7a8c',
+  },
+};
+
+// Cameras sweep and feed the alarm directly; they never chase.
+export const CAMERA = { range: 250, cone: 0.5, risePerSecond: 9 };
+
+// Tools. The coin is aimed with the mouse; smoke hides the thief; the EMP
+// blinds every camera and drone for its duration.
+export const TOOLS = {
+  coin: { name: 'Coin Toss', cost: 25, blurb: 'aim with mouse', key: '1' },
+  smoke: { name: 'Smoke Pellet', cost: 50, blurb: 'hides you 6s', key: '2', duration: 6, radius: 74 },
+  emp: { name: 'EMP Pulse', cost: 100, blurb: 'blinds machines 8s', key: '3', duration: 8 },
+};
+
+// Every heist starts with this much kit fund. Unspent fund pays out.
+export const KIT_FUND = 150;
+
+// The three jobs. Counts are the watchers each room holds.
+export const HEISTS = [
+  {
+    name: 'The Gallery of Echoes',
+    prize: 'Aurum Sun Mask',
+    prizeValue: 1200,
+    guards: 3,
+    cameras: 2,
+    lasers: 0,
+    parSeconds: 75,
+  },
+  {
+    name: 'The Meridian Bank Vault',
+    prize: 'Aurum Heart Diamond',
+    prizeValue: 2500,
+    guards: 4,
+    cameras: 3,
+    lasers: 2,
+    parSeconds: 95,
+  },
+  {
+    name: 'The Sky Casino',
+    prize: 'Aurum Jackpot',
+    prizeValue: 4000,
+    guards: 5,
+    cameras: 3,
+    lasers: 2,
+    parSeconds: 115,
+  },
+];
+
+// Campaign ranks by total gold banked across the three jobs.
+export const RANKS = [
+  { at: 0, name: 'STREET RAT' },
+  { at: 1500, name: 'PICKPOCKET' },
+  { at: 3500, name: 'CAT BURGLAR' },
+  { at: 6000, name: 'SHADOW' },
+  { at: 9000, name: 'MASTER THIEF' },
+  { at: 12500, name: 'LEGEND OF THE NIGHT' },
+];
+
+export function rankFor(totalGold) {
+  let rank = RANKS[0].name;
+  for (const r of RANKS) {
+    if (totalGold >= r.at) rank = r.name;
+  }
+  return rank;
+}
+
+// Time bonus: gold per second under par, capped at the par itself.
+export const TIME_BONUS_PER_SECOND = 8;
+
+// Escape during a lockdown pays this bonus on top of the loot.
+export const LOCKDOWN_ESCAPE_BONUS = 250;

@@ -1,156 +1,142 @@
-// THE GILDED FOX — the HUD. The alarm meter is the star: a big bar across
-// the top that the eye finds in a glance, green to amber to red, with the
-// lockdown countdown when it matters. Around it: the heist name, the loot
-// and the purse, the clock, the objective, and the tool belt with prices —
-// every system the game has, visible while you play.
-import { PALETTE, VIEW } from './config.js';
-import { alarmBand } from './alarm.js';
-import { toolBelt } from './loot.js';
+// The HUD: the top bar (heist, alarm, purse, clock), the bottom bar
+// (controls and the tool belt) and the centre banner. Drawn over the world
+// every frame, so the player always sees the alarm, the purse and the goal.
 
-const SANS = '"Segoe UI", system-ui, -apple-system, sans-serif';
-const SERIF = 'Georgia, "Times New Roman", serif';
+import { PALETTE, TOOLS, VIEW } from './config.js';
 
-/** The tool belt's clickable rects, in belt order (coin, smoke, EMP). */
-export function toolBeltRects() {
-  const boxW = 148;
-  const boxH = 44;
-  const gap = 10;
-  const totalW = 3 * boxW + 2 * gap;
-  const x = (VIEW.width - totalW) / 2;
-  const y = VIEW.height - boxH - 12;
-  return [0, 1, 2].map((i) => ({ x: x + i * (boxW + gap), y, w: boxW, h: boxH }));
+function fmtTime(seconds) {
+  const m = Math.floor(seconds / 60);
+  const s = Math.floor(seconds % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
-/** The full HUD for one frame of a live world. */
-export function drawHud(ctx, world, app) {
-  drawTopBar(ctx, world, app);
-  drawToolBelt(ctx, world);
-  drawObjective(ctx, world);
-  drawMessage(ctx, world);
-}
-
-function drawTopBar(ctx, world, app) {
-  const { heist, alarm } = world;
-  ctx.fillStyle = 'rgba(10, 13, 28, 0.92)';
-  ctx.fillRect(0, 0, VIEW.width, VIEW.hudHeight);
-  ctx.strokeStyle = PALETTE.wallTrim;
+export function drawTopBar(ctx, game) {
+  const world = game.world;
+  const level = world.level;
+  ctx.fillStyle = '#0e1220';
+  ctx.fillRect(0, 0, VIEW.width, 64);
+  ctx.strokeStyle = PALETTE.goldDim;
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.moveTo(0, VIEW.hudHeight);
-  ctx.lineTo(VIEW.width, VIEW.hudHeight);
+  ctx.moveTo(0, 64);
+  ctx.lineTo(VIEW.width, 64);
   ctx.stroke();
 
-  // Left: heist name + mode.
+  // Left: heist name and mode.
   ctx.textAlign = 'left';
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `700 16px ${SERIF}`;
-  ctx.fillText(heist.name.toUpperCase(), 20, 24);
-  ctx.fillStyle = PALETTE.dim;
-  ctx.font = `600 11px ${SANS}`;
-  ctx.fillText(`${app.mode.toUpperCase()} MODE  ·  HEIST ${heist.index + 1} OF 3`, 20, 42);
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = 'bold 17px Georgia, serif';
+  ctx.fillText(level.name.toUpperCase(), 20, 26);
+  ctx.fillStyle = PALETTE.muted;
+  ctx.font = '12px Georgia, serif';
+  ctx.fillText(`${game.mode.toUpperCase()} MODE · HEIST ${world.heistIndex + 1} OF 3`, 20, 46);
 
-  // Centre: the alarm meter — big, labelled, impossible to miss.
-  const meterX = 470;
-  const meterW = 340;
-  const meterY = 14;
-  const meterH = 20;
-  ctx.fillStyle = PALETTE.dim;
-  ctx.font = `700 12px ${SANS}`;
-  ctx.textAlign = 'left';
-  ctx.fillText('ALARM', meterX, meterY + 15);
-  ctx.fillStyle = '#1c2138';
-  ctx.fillRect(meterX + 62, meterY, meterW, meterH);
-  const band = alarmBand(alarm);
-  const color = band === 'lockdown' ? PALETTE.alarmHigh : band === 'hot' ? PALETTE.alarmHigh : band === 'warm' ? PALETTE.alarmMid : PALETTE.alarmLow;
-  const fillW = (alarm.value / 100) * meterW;
-  ctx.fillStyle = color;
-  ctx.fillRect(meterX + 62, meterY, fillW, meterH);
-  ctx.strokeStyle = '#f4f1e8';
-  ctx.lineWidth = 1.5;
-  ctx.strokeRect(meterX + 62, meterY, meterW, meterH);
-  ctx.fillStyle = PALETTE.text;
-  ctx.font = `700 13px ${SANS}`;
-  ctx.fillText(`${Math.round(alarm.value)}%`, meterX + 62 + meterW + 10, meterY + 15);
-  if (alarm.lockdown) {
-    ctx.fillStyle = PALETTE.alarmHigh;
-    ctx.font = `800 13px ${SANS}`;
-    ctx.textAlign = 'center';
-    ctx.fillText(`LOCKDOWN — ${Math.ceil(alarm.lockdownLeft)}s TO THE EXIT`, meterX + 62 + meterW / 2, meterY + 36);
-  } else {
-    ctx.fillStyle = PALETTE.dim;
-    ctx.font = `600 11px ${SANS}`;
-    ctx.textAlign = 'center';
-    ctx.fillText(band === 'calm' ? 'UNSEEN — STAY IN THE SHADOWS' : band === 'warm' ? 'SOMEONE IS SUSPICIOUS — BREAK AWAY' : 'THEY ARE ONTO YOU — RUN OR HIDE', meterX + 62 + meterW / 2, meterY + 36);
-  }
-
-  // Right: loot, purse, clock.
-  ctx.textAlign = 'right';
-  ctx.fillStyle = PALETTE.loot;
-  ctx.font = `700 15px ${SANS}`;
-  const lootText = world.loot.taken ? `${heist.loot.value}g SECURED` : `${heist.loot.value}g TO STEAL`;
-  ctx.fillText(lootText, VIEW.width - 20, 24);
-  ctx.fillStyle = PALETTE.dim;
-  ctx.font = `600 12px ${SANS}`;
-  const minutes = Math.floor(world.elapsed / 60);
-  const seconds = Math.floor(world.elapsed % 60);
-  ctx.fillText(`PURSE ${world.tools.purse}g  ·  ${minutes}:${String(seconds).padStart(2, '0')}`, VIEW.width - 20, 42);
-}
-
-function drawToolBelt(ctx, world) {
-  const belt = toolBelt(world.tools.purse);
-  const rects = toolBeltRects();
-  belt.forEach((tool, index) => {
-    const bx = rects[index].x;
-    const y = rects[index].y;
-    const boxW = rects[index].w;
-    const boxH = rects[index].h;
-    ctx.fillStyle = tool.afford ? 'rgba(16, 20, 42, 0.92)' : 'rgba(16, 20, 42, 0.55)';
-    ctx.fillRect(bx, y, boxW, boxH);
-    ctx.strokeStyle = tool.afford ? PALETTE.wallTrim : '#444a66';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(bx, y, boxW, boxH);
-    ctx.textAlign = 'left';
-    ctx.fillStyle = tool.afford ? PALETTE.text : '#777c96';
-    ctx.font = `700 13px ${SANS}`;
-    ctx.fillText(`[${tool.key}] ${tool.name}`, bx + 10, y + 19);
-    ctx.fillStyle = tool.afford ? PALETTE.loot : '#777c96';
-    ctx.font = `600 11px ${SANS}`;
-    const hint = tool.id === 'coin' ? 'aim with mouse' : tool.id === 'smoke' ? 'hides you 6s' : 'blinds machines 8s';
-    ctx.fillText(`${tool.cost}g  ·  ${hint}`, bx + 10, y + 35);
-  });
-  // Lockpick hint, bottom-left.
-  ctx.textAlign = 'left';
-  ctx.fillStyle = PALETTE.dim;
-  ctx.font = `600 11px ${SANS}`;
-  ctx.fillText('[E] LOCKPICK (hold, stay still)   [SHIFT] SNEAK   [SPACE] SPRINT   [M] SOUND   [P] PAUSE', 20, VIEW.height - 56);
-}
-
-function drawObjective(ctx, world) {
-  const { loot } = world;
-  ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(10, 13, 28, 0.75)';
-  ctx.fillRect(20, 68, 340, 26);
-  ctx.fillStyle = loot.taken ? PALETTE.exit : PALETTE.loot;
-  ctx.font = `700 13px ${SANS}`;
-  const text = loot.taken
-    ? `★ ${loot.name} secured — reach the EXIT!`
-    : `★ Steal the ${loot.name} (${loot.value}g)`;
-  ctx.fillText(text, 30, 86);
-}
-
-function drawMessage(ctx, world) {
-  if (!world.message || world.time >= world.messageUntil) return;
+  // Centre: the alarm meter.
   ctx.textAlign = 'center';
-  ctx.font = `800 26px ${SERIF}`;
-  const w = ctx.measureText(world.message).width + 48;
-  // The message bar sits at the bottom of the room, never over the vault:
-  // the prize must stay visible while the news is up.
-  const y = VIEW.height - 108;
-  ctx.fillStyle = 'rgba(10, 13, 28, 0.85)';
-  ctx.fillRect((VIEW.width - w) / 2, y, w, 44);
-  ctx.strokeStyle = PALETTE.wallTrim;
+  ctx.fillStyle = PALETTE.muted;
+  ctx.font = '12px Georgia, serif';
+  ctx.fillText('ALARM', 470, 26);
+  const bx = 500;
+  const bw = 280;
+  ctx.fillStyle = '#1d2440';
+  ctx.fillRect(bx, 12, bw, 20);
+  const pct = world.alarm / 100;
+  ctx.fillStyle = pct < 0.5 ? PALETTE.safe : pct < 0.8 ? '#f2c94c' : '#e5484d';
+  ctx.fillRect(bx, 12, bw * pct, 20);
+  ctx.strokeStyle = PALETTE.goldDim;
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(bx, 12, bw, 20);
+  ctx.fillStyle = PALETTE.ink;
+  ctx.font = 'bold 13px Georgia, serif';
+  ctx.fillText(`${Math.round(world.alarm)}%`, bx + bw + 28, 27);
+  // Status line under the meter.
+  ctx.fillStyle = world.lockdown ? '#e5484d' : world.alarmHot ? '#f2c94c' : PALETTE.muted;
+  ctx.font = '12px Georgia, serif';
+  const status = world.lockdown
+    ? `LOCKDOWN — ${Math.ceil(world.lockdownLeft)}s TO THE EXIT!`
+    : world.alarmHot
+      ? 'SOMEONE IS SUSPICIOUS — BREAK AWAY'
+      : 'UNSEEN — STAY IN THE SHADOWS';
+  ctx.fillText(status, 640, 50);
+
+  // Right: prize and purse.
+  ctx.textAlign = 'right';
+  ctx.fillStyle = PALETTE.goldBright;
+  ctx.font = 'bold 15px Georgia, serif';
+  ctx.fillText(
+    world.lootSecured ? `${level.prizeValue}g SECURED` : `${level.prizeValue}g TO STEAL`,
+    1260, 26,
+  );
+  ctx.fillStyle = PALETTE.muted;
+  ctx.font = '12px Georgia, serif';
+  ctx.fillText(`PURSE ${world.purse}g · ${fmtTime(world.time)}`, 1260, 46);
+}
+
+export function drawBottomBar(ctx, game) {
+  const world = game.world;
+  ctx.fillStyle = '#0e1220';
+  ctx.fillRect(0, VIEW.height - 64, VIEW.width, 64);
+  ctx.strokeStyle = PALETTE.goldDim;
   ctx.lineWidth = 2;
-  ctx.strokeRect((VIEW.width - w) / 2, y, w, 44);
-  ctx.fillStyle = PALETTE.text;
-  ctx.fillText(world.message, VIEW.width / 2, y + 30);
+  ctx.beginPath();
+  ctx.moveTo(0, VIEW.height - 64);
+  ctx.lineTo(VIEW.width, VIEW.height - 64);
+  ctx.stroke();
+
+  // Left: the objective.
+  ctx.textAlign = 'left';
+  ctx.fillStyle = PALETTE.goldBright;
+  ctx.font = 'bold 13px Georgia, serif';
+  const objective = world.lootSecured
+    ? `★ ${world.level.prize} secured — reach the EXIT!`
+    : `★ Steal the ${world.level.prize} (${world.level.prizeValue}g)`;
+  ctx.fillText(objective, 20, VIEW.height - 40);
+  ctx.fillStyle = PALETTE.muted;
+  ctx.font = '11px Georgia, serif';
+  ctx.fillText(
+    '[E] LOCKPICK (hold, stay still)   [SHIFT] SNEAK   [SPACE] SPRINT   [M] SOUND   [P] PAUSE',
+    20, VIEW.height - 18,
+  );
+
+  // Right: the tool belt.
+  let x = VIEW.width - 20;
+  const slots = ['emp', 'smoke', 'coin'];
+  for (const slot of slots) {
+    const tool = TOOLS[slot];
+    const w = 168;
+    x -= w;
+    const afford = world.purse >= tool.cost;
+    ctx.fillStyle = afford ? '#1d2440' : '#141a2e';
+    ctx.fillRect(x, VIEW.height - 56, w - 8, 48);
+    ctx.strokeStyle = afford ? PALETTE.gold : '#3a4668';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(x, VIEW.height - 56, w - 8, 48);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = afford ? PALETTE.ink : PALETTE.muted;
+    ctx.font = 'bold 12px Georgia, serif';
+    ctx.fillText(`[${tool.key}] ${tool.name}`, x + 10, VIEW.height - 38);
+    ctx.fillStyle = PALETTE.gold;
+    ctx.font = '11px Georgia, serif';
+    ctx.fillText(`${tool.cost}g · ${tool.blurb}`, x + 10, VIEW.height - 20);
+    x -= 4;
+  }
+}
+
+// A big centre banner (laser trips, loot secured, lockdown).
+export function drawBanner(ctx, game) {
+  const world = game.world;
+  if (!world.banner) return;
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 26px Georgia, serif';
+  const text = world.banner.text;
+  const w = ctx.measureText(text).width + 48;
+  const x = (VIEW.width - w) / 2;
+  const y = VIEW.height - 150;
+  ctx.fillStyle = 'rgba(14, 18, 32, 0.92)';
+  ctx.fillRect(x, y, w, 44);
+  ctx.strokeStyle = PALETTE.goldBright;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, 44);
+  ctx.fillStyle = PALETTE.ink;
+  ctx.fillText(text, VIEW.width / 2, y + 30);
 }

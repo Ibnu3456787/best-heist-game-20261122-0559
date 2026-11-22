@@ -1,73 +1,95 @@
-// THE GILDED FOX — keyboard and mouse. WASD and arrows move; Shift sneaks,
-// Space sprints, E picks locks, 1/2/3 spend tools, M mutes, P pauses, Esc
-// backs out. The mouse aims the coin (click where it should land) and
-// presses every on-screen button. Input is polled each frame, never event
-// queued, so a held key and a staged replay behave the same way.
-import { VIEW } from './config.js';
+// Keyboard and mouse input for THE GILDED FOX.
+// One shared input object: the game loop reads it, the menus read the
+// clicks. Keys are tracked by code, so WASD and arrows both work, and the
+// coin is aimed with the mouse position on the canvas.
 
-/** Fresh input state, bound to a canvas element. */
-export function makeInput(canvas) {
+export function createInput(canvas) {
   const input = {
-    keys: new Set(),
+    up: false,
+    down: false,
+    left: false,
+    right: false,
+    sneak: false,
+    sprint: false,
+    pick: false,
+    tool: null,
+    aimX: 0,
+    aimY: 0,
+    // Clicks, consumed by whoever reads them first.
+    clicks: [],
     mouseX: 0,
     mouseY: 0,
-    mouseDown: false,
-    clicked: false, // consumed by the main loop each frame
-    clickX: 0,
-    clickY: 0,
+    keysDown: {},
   };
 
-  const toGame = (event) => {
-    const rect = canvas.getBoundingClientRect();
-    return {
-      x: ((event.clientX - rect.left) / rect.width) * VIEW.width,
-      y: ((event.clientY - rect.top) / rect.height) * VIEW.height,
-    };
+  const KEYMAP = {
+    KeyW: 'up',
+    ArrowUp: 'up',
+    KeyS: 'down',
+    ArrowDown: 'down',
+    KeyA: 'left',
+    ArrowLeft: 'left',
+    KeyD: 'right',
+    ArrowRight: 'right',
+    ShiftLeft: 'sneak',
+    ShiftRight: 'sneak',
+    Space: 'sprint',
+    KeyE: 'pick',
   };
 
-  globalThis.addEventListener('keydown', (event) => {
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(event.key)) event.preventDefault();
-    input.keys.add(event.key.toLowerCase());
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'Space') e.preventDefault();
+    const field = KEYMAP[e.code];
+    if (field) input[field] = true;
+    input.keysDown[e.code] = true;
+    if (e.code === 'Digit1') input.tool = 'coin';
+    if (e.code === 'Digit2') input.tool = 'smoke';
+    if (e.code === 'Digit3') input.tool = 'emp';
   });
-  globalThis.addEventListener('keyup', (event) => {
-    input.keys.delete(event.key.toLowerCase());
+
+  window.addEventListener('keyup', (e) => {
+    const field = KEYMAP[e.code];
+    if (field) input[field] = false;
+    input.keysDown[e.code] = false;
   });
-  globalThis.addEventListener('blur', () => input.keys.clear());
-  canvas.addEventListener('mousemove', (event) => {
-    const pos = toGame(event);
-    input.mouseX = pos.x;
-    input.mouseY = pos.y;
+
+  canvas.addEventListener('mousemove', (e) => {
+    const r = canvas.getBoundingClientRect();
+    input.mouseX = ((e.clientX - r.left) / r.width) * canvas.width;
+    input.mouseY = ((e.clientY - r.top) / r.height) * canvas.height;
+    input.aimX = input.mouseX;
+    input.aimY = input.mouseY;
   });
-  canvas.addEventListener('mousedown', (event) => {
-    const pos = toGame(event);
-    input.mouseDown = true;
-    input.clicked = true;
-    input.clickX = pos.x;
-    input.clickY = pos.y;
+
+  canvas.addEventListener('mousedown', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * canvas.width;
+    const y = ((e.clientY - r.top) / r.height) * canvas.height;
+    input.clicks.push({ x, y });
+    input.mouseX = x;
+    input.mouseY = y;
+    input.aimX = x;
+    input.aimY = y;
   });
-  globalThis.addEventListener('mouseup', () => {
-    input.mouseDown = false;
-  });
+
   return input;
 }
 
-/** True when a key is held right now (case-insensitive). */
-export function keyDown(input, key) {
-  return input.keys.has(key.toLowerCase());
+// Was this key pressed since the last frame? (edge-triggered, not held)
+export function pressed(input, code) {
+  if (input.keysDown[code]) {
+    input.keysDown[code] = false;
+    return true;
+  }
+  return false;
 }
 
-/** The movement vector from the held keys, each component in [-1, 1]. */
-export function moveVector(input) {
-  let dx = 0;
-  let dy = 0;
-  if (keyDown(input, 'a') || keyDown(input, 'arrowleft')) dx -= 1;
-  if (keyDown(input, 'd') || keyDown(input, 'arrowright')) dx += 1;
-  if (keyDown(input, 'w') || keyDown(input, 'arrowup')) dy -= 1;
-  if (keyDown(input, 's') || keyDown(input, 'arrowdown')) dy += 1;
-  return { dx, dy };
+// Take the oldest unconsumed click, or null.
+export function takeClick(input) {
+  return input.clicks.shift() || null;
 }
 
-/** True when the point (x, y) lies inside rect { x, y, w, h }. */
-export function inRect(x, y, rect) {
-  return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+export function inside(point, rect) {
+  return point.x >= rect.x && point.x <= rect.x + rect.w &&
+    point.y >= rect.y && point.y <= rect.y + rect.h;
 }

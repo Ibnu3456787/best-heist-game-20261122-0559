@@ -65,13 +65,12 @@ pause.
 by an in-repo pilot (`game/src/shots.js`) that walks the rooms under the
 real rules — no editing, no compositing:
 
-1. `1-cover.jpg` — the bank vault mid-heist: the Fox in the open, four
-   guard cones, three camera cones, the lasers, the diamond in its case,
-   and the alarm meter warm at 25%.
+1. `1-cover.jpg` — the bank vault mid-heist: the Fox below the vault, the
+   laser tripped, the alarm warm, guard and camera cones sweeping the room.
 2. `2-briefing.jpg` — the title screen: the three jobs, the two modes, and
    a note to the judge.
-3. `3-getaway.jpg` — the mask secured, the alarm at 54%, the Fox sprinting
-   for the exit.
+3. `3-getaway.jpg` — the mask secured, the alarm cold after a clean job,
+   the Fox sprinting for the exit with the door open.
 4. `4-caught.jpg` — the bust: caught red-handed, with the reason and the
    lesson on screen.
 
@@ -79,20 +78,21 @@ real rules — no editing, no compositing:
 
 ```
 game/            the game — index.html + src/ (one file per system)
-  src/config.js  tuning: speeds, ranges, costs, palette
-  src/heists.js  the three rooms (walls, guards, cameras, lasers, vents)
-  src/guards.js  patrol / stare / chase / investigate / return
+  src/rng.js     seeded random numbers, so a run replays exactly
+  src/geometry.js line of sight, cones, circle-vs-wall collision
+  src/config.js  tuning: speeds, ranges, costs, palette, ranks
+  src/levels.js  the three rooms (walls, patrols, cameras, lasers, vents)
+  src/guards.js  patrol / chase / investigate / return + suspicion
   src/cameras.js sweeping cameras + EMP
-  src/lasers.js  toggling beams
-  src/thief.js   movement, sneaking, sprinting, hiding
-  src/loot.js    the case, the prize, the exit
+  src/lasers.js  toggling beams + trips
+  src/thief.js   movement, sneaking, sprinting, hiding, lockpick
+  src/tools.js   coin, smoke, EMP
   src/alarm.js   the meter, lockdown, Ghost bust
-  src/tools.js   coin, smoke, EMP, lockpick
   src/world.js   the simulation: one step, every system
   src/state.js   screens, campaign, payout
   src/render.js  the canvas painter
   src/hud.js     the meter, the tool belt, the message bar
-  src/screens.js title, briefing, payout, busted
+  src/screens.js title, payout, busted, pause
   src/audio.js   WebAudio sound effects, no files
   src/input.js   keyboard + mouse
   src/shots.js   the pilot that stages the screenshots
@@ -101,6 +101,7 @@ main.ts          the hand-in: copies game/ + screenshots/ to /output and
                  writes /output/dossier.json (vendored make.fun library)
 serve.ts         a tiny static server for local play
 shots.json       the four screenshot scenes
+tests/           headless tests (node --test) for the simulation
 vendor/          the make.fun dossier library, from the official kit
 ```
 

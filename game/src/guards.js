@@ -1,223 +1,169 @@
-// THE GILDED FOX — guard AI: five kinds, one brain. A guard patrols its
-// route, grows suspicious when the thief crosses its vision cone, stares to
-// make sure ("?"), then chases ("!") — and forgets when the trail goes cold.
-// The caught moment is fair on purpose: suspicion has to fill before a chase
-// starts, and breaking line of sight always cools it down.
-import { GUARD, SIGHT, THIEF, TOOLS } from './config.js';
-import { angleDiff, angleTo, hasLineOfSight, inCone, smokeBlocks } from './cones.js';
+// Guards: patrol, suspicion, chase, investigate, return.
+// A guard is a state machine. While it can see the thief its suspicion
+// fills; a full meter turns the patrol into a chase. A chase that touches
+// the thief busts the heist. A thrown coin sends the nearest guards to look.
 
-export const STATE_PATROL = 'patrol';
-export const STATE_STARE = 'stare';
-export const STATE_CHASE = 'chase';
-export const STATE_INVESTIGATE = 'investigate';
-export const STATE_RETURN = 'return';
+import { GUARD_KINDS } from './config.js';
+import { angleDiff, clamp, dist, inVisionCone, lineBlocked, resolveCircleRects } from './geometry.js';
 
-/** Build live guard objects from a heist's guard list. */
-export function makeGuards(heist) {
-  return heist.guards.map((def, index) => ({
-    id: index,
+export const GUARD_RADIUS = 14;
+
+// Build a guard from a level definition: { kind, x, y, waypoints }.
+export function makeGuard(def) {
+  const kind = GUARD_KINDS[def.kind];
+  return {
     kind: def.kind,
+    label: kind.label,
     x: def.x,
     y: def.y,
-    angle: def.baseAngle ?? 0,
-    baseAngle: def.baseAngle ?? 0,
-    sweep: def.sweep ?? 0,
-    route: def.route,
-    routeIndex: 0,
-    flies: def.flies === true,
-    speed: def.kind === 'hound' ? GUARD.patrolSpeed * 1.35 : GUARD.patrolSpeed,
-    state: STATE_PATROL,
+    angle: 0,
+    speed: kind.speed,
+    range: kind.range,
+    cone: kind.cone,
+    suspicionRate: kind.suspicion,
+    chaseSpeed: kind.chase,
+    color: kind.color,
+    waypoints: def.waypoints,
+    waypointIndex: 1 % def.waypoints.length,
+    state: 'patrol',
     suspicion: 0,
-    stateTime: 0,
-    lastSeen: null,
-    target: null,
-    spotted: false, // true while the thief is in this guard's cone right now
-  }));
+    // Seconds since the guard last saw the thief.
+    unseenFor: 99,
+    investigateX: 0,
+    investigateY: 0,
+    investigateFor: 0,
+    // Facing used while standing still (sentries pan around it).
+    baseAngle: 0,
+    panTime: 0,
+  };
 }
 
-/**
- * How far this watcher can see the thief right now, after stealth modifiers:
- * shadows and sneaking shrink it, sprinting stretches it. Vents and smoke
- * hide the thief outright (checked by the caller through `hidden`).
- */
-export function sightRange(kind, thief) {
-  let range = SIGHT[kind].range;
-  if (thief.inShadow) range *= 0.55;
-  if (thief.sneaking) range *= THIEF.sneakDetect;
-  if (thief.sprinting) range *= THIEF.sprintDetect;
-  return range;
+// Can this guard see the thief right now? Walls block sight; vents and
+// smoke hide the thief completely; shadows and sneaking slow the fill.
+// An EMP-blinded drone sees nothing until its blindness wears off.
+export function guardSeesThief(g, thief, walls) {
+  if (thief.hidden) return false;
+  if (g.kind === 'drone' && g.blindFor > 0) return false;
+  return inVisionCone(g.x, g.y, g.angle, g.range, g.cone, thief.x, thief.y, walls);
 }
 
-/** True when `watcher` can see the thief this step. */
-export function watcherSeesThief(watcher, thief, walls, hidden, smoke) {
-  if (hidden) return false;
-  const range = sightRange(watcher.kind, thief);
-  if (!inCone(watcher.x, watcher.y, watcher.angle, SIGHT[watcher.kind].halfAngle, range, thief.x, thief.y)) {
-    return false;
+// How fast this guard's suspicion fills while it sees the thief:
+// closer is faster, sneaking and shadows slow it, sprinting hurries it.
+export function suspicionFill(g, thief) {
+  const d = dist(g.x, g.y, thief.x, thief.y);
+  const closeness = 1.7 - (d / g.range);
+  let factor = closeness;
+  if (thief.sneaking) factor *= 0.55;
+  if (thief.sprinting) factor *= 1.6;
+  if (thief.inShadow) factor *= 0.55;
+  return g.suspicionRate * Math.max(0.25, factor);
+}
+
+function moveToward(g, tx, ty, speed, dt, walls) {
+  const dx = tx - g.x;
+  const dy = ty - g.y;
+  const d = Math.sqrt(dx * dx + dy * dy);
+  if (d < 1) return true;
+  const step = Math.min(d, speed * dt);
+  const nx = g.x + (dx / d) * step;
+  const ny = g.y + (dy / d) * step;
+  const fixed = resolveCircleRects(nx, ny, GUARD_RADIUS, walls);
+  g.x = fixed.x;
+  g.y = fixed.y;
+  g.angle = Math.atan2(dy, dx);
+  return d - step < 2;
+}
+
+export function updateGuard(g, world, dt) {
+  const thief = world.thief;
+  const walls = world.level.walls;
+  if (g.blindFor > 0) g.blindFor -= dt;
+  const sees = guardSeesThief(g, thief, walls);
+
+  if (sees) {
+    g.unseenFor = 0;
+    g.suspicion = clamp(g.suspicion + suspicionFill(g, thief) * dt, 0, 100);
+  } else {
+    g.unseenFor += dt;
+    // Suspicion cools off only while the thief is out of sight.
+    g.suspicion = clamp(g.suspicion - 12 * dt, 0, 100);
   }
-  if (smokeBlocks(watcher.x, watcher.y, thief.x, thief.y, smoke)) return false;
-  return hasLineOfSight(watcher.x, watcher.y, thief.x, thief.y, walls);
-}
 
-function turnToward(guard, targetAngle, dt, rate = 6) {
-  let diff = targetAngle - guard.angle;
-  while (diff > Math.PI) diff -= Math.PI * 2;
-  while (diff < -Math.PI) diff += Math.PI * 2;
-  const step = Math.max(-rate * dt, Math.min(rate * dt, diff));
-  guard.angle += step;
-}
-
-function moveToward(guard, tx, ty, speed, dt) {
-  const dx = tx - guard.x;
-  const dy = ty - guard.y;
-  const dist = Math.hypot(dx, dy);
-  if (dist < 1) return true;
-  const step = Math.min(dist, speed * dt);
-  guard.x += (dx / dist) * step;
-  guard.y += (dy / dist) * step;
-  turnToward(guard, Math.atan2(dy, dx), dt);
-  return step >= dist - 0.01;
-}
-
-/**
- * Step every guard one tick. `ctx` carries the thief, the walls, whether the
- * thief is hidden (vent / smoke), the coin distraction point, the time, and
- * an `events` array this fills with { type, guard } records.
- */
-export function updateGuards(guards, dt, ctx) {
-  const { thief, walls, hidden, time, coinPoint } = ctx;
-  for (const guard of guards) {
-    // An EMP pulse freezes drones solid: no sight, no movement, no memory.
-    if (guard.kind === 'drone' && ctx.empActive) {
-      guard.spotted = false;
-      continue;
-    }
-    guard.stateTime += dt;
-    const seen = watcherSeesThief(guard, thief, walls, hidden, ctx.smoke);
-    guard.spotted = seen;
-
-    // Suspicion fills on sight, drains in the dark. Sprinting fills it faster.
-    if (seen) {
-      const rate = SIGHT[guard.kind].fill * (thief.sprinting ? 1.5 : 1);
-      guard.suspicion = Math.min(100, guard.suspicion + rate * dt);
-      guard.lastSeen = { x: thief.x, y: thief.y };
+  if (g.state === 'patrol') {
+    if (g.suspicion >= 100) {
+      g.state = 'chase';
+      world.events.push({ type: 'chase', guard: g });
     } else {
-      guard.suspicion = Math.max(0, guard.suspicion - GUARD.suspicionDecay * dt);
+      patrolStep(g, world, dt);
     }
-
-    // A coin landing nearby pulls a calm guard off its route to look.
-    if (coinPoint && guard.state === STATE_PATROL && guard.suspicion < GUARD.suspiciousAt) {
-      const d = Math.hypot(coinPoint.x - guard.x, coinPoint.y - guard.y);
-      if (d < TOOLS.coin.radius) {
-        guard.state = STATE_INVESTIGATE;
-        guard.target = { x: coinPoint.x, y: coinPoint.y };
-        guard.stateTime = 0;
-        ctx.events.push({ type: 'distracted', guard });
-      }
-    }
-
-    // Lockdown: the alarm tells every guard exactly where the thief is.
-    // They all converge — the ten-second dash to the exit is a real chase.
-    // Breaking into a vent or smoke still shakes them off: they lose the
-    // live position and hunt the last place they knew.
-    if (ctx.lockdown && !hidden) {
-      guard.suspicion = 100;
-      guard.lastSeen = { x: thief.x, y: thief.y };
-      if (guard.state !== STATE_CHASE) {
-        guard.state = STATE_CHASE;
-        guard.stateTime = 0;
+  } else if (g.state === 'chase') {
+    if (g.suspicion <= 0 && g.unseenFor > 3) {
+      g.state = 'return';
+    } else {
+      moveToward(g, thief.x, thief.y, g.chaseSpeed, dt, walls);
+      // Caught: a chasing guard that touches the thief ends the heist.
+      if (dist(g.x, g.y, thief.x, thief.y) < GUARD_RADIUS + 13) {
+        world.phase = 'busted';
+        world.bustReason = 'caught';
+        world.bustGuard = g.label;
       }
     }
+  } else if (g.state === 'investigate') {
+    g.investigateFor -= dt;
+    const arrived = moveToward(g, g.investigateX, g.investigateY, g.speed * 1.25, dt, walls);
+    if (arrived || g.investigateFor <= 0) {
+      g.state = 'return';
+    }
+  } else if (g.state === 'return') {
+    const target = g.waypoints[g.waypointIndex];
+    const arrived = moveToward(g, target[0], target[1], g.speed, dt, walls);
+    if (arrived) {
+      g.waypointIndex = (g.waypointIndex + 1) % g.waypoints.length;
+      g.state = 'patrol';
+    }
+  }
 
-    if (guard.state === STATE_PATROL) {
-      if (guard.suspicion >= GUARD.alertAt) {
-        guard.state = STATE_CHASE;
-        guard.stateTime = 0;
-        ctx.events.push({ type: 'alert', guard });
-      } else if (guard.suspicion >= GUARD.suspiciousAt) {
-        guard.state = STATE_STARE;
-        guard.stateTime = 0;
-        ctx.events.push({ type: 'suspicious', guard });
-      } else {
-        patrolStep(guard, dt, time);
-      }
-    } else if (guard.state === STATE_STARE) {
-      if (guard.lastSeen) turnToward(guard, angleTo(guard.x, guard.y, guard.lastSeen.x, guard.lastSeen.y), dt);
-      if (guard.kind === 'hound' && guard.lastSeen) {
-        moveToward(guard, guard.lastSeen.x, guard.lastSeen.y, guard.speed, dt);
-      }
-      if (guard.suspicion >= GUARD.alertAt) {
-        guard.state = STATE_CHASE;
-        guard.stateTime = 0;
-        ctx.events.push({ type: 'alert', guard });
-      } else if (!seen && guard.stateTime > GUARD.stareSeconds) {
-        guard.state = STATE_PATROL;
-        guard.stateTime = 0;
-      }
-    } else if (guard.state === STATE_CHASE) {
-      const speed = guard.kind === 'hound' ? GUARD.houndChaseSpeed : GUARD.chaseSpeed;
-      const target = guard.lastSeen ?? { x: guard.x, y: guard.y };
-      const arrived = moveToward(guard, target.x, target.y, speed, dt);
-      const touch = Math.hypot(thief.x - guard.x, thief.y - guard.y);
-      if (touch < GUARD.touchBust && seen) {
-        ctx.events.push({ type: 'caught', guard });
-      } else if ((arrived && !seen) || guard.suspicion <= 0) {
-        guard.state = STATE_RETURN;
-        guard.stateTime = 0;
-      }
-    } else if (guard.state === STATE_INVESTIGATE) {
-      const arrived = moveToward(guard, guard.target.x, guard.target.y, GUARD.returnSpeed, dt);
-      if (guard.suspicion >= GUARD.alertAt) {
-        guard.state = STATE_CHASE;
-        guard.stateTime = 0;
-        ctx.events.push({ type: 'alert', guard });
-      } else if (arrived || guard.stateTime > GUARD.investigateSeconds) {
-        guard.state = STATE_RETURN;
-        guard.stateTime = 0;
-      }
-    } else if (guard.state === STATE_RETURN) {
-      const home = guard.route[guard.routeIndex];
-      if (moveToward(guard, home[0], home[1], GUARD.returnSpeed, dt)) {
-        guard.state = STATE_PATROL;
-        guard.stateTime = 0;
-      }
+  // A guard that spots the thief while investigating still chases.
+  if (g.state !== 'chase' && g.suspicion >= 100 && g.state !== 'investigate') {
+    g.state = 'chase';
+  }
+}
+
+// Walk the patrol loop. Sentries (two waypoints close together) drift
+// slowly and pan their gaze; everyone else walks waypoint to waypoint.
+function patrolStep(g, world, dt) {
+  const target = g.waypoints[g.waypointIndex];
+  const arrived = moveToward(g, target[0], target[1], g.speed, dt, world.level.walls);
+  if (arrived) {
+    g.waypointIndex = (g.waypointIndex + 1) % g.waypoints.length;
+  }
+  // Sentries pan: their gaze sweeps ±50 degrees around their facing.
+  if (g.kind === 'sentry') {
+    g.panTime += dt;
+    g.angle = g.baseAngle + Math.sin(g.panTime * 0.9) * 0.9;
+  }
+}
+
+// Send every guard within earshot to look at a thrown coin.
+export function distractGuards(world, x, y) {
+  for (const g of world.guards) {
+    if (g.state === 'chase') continue;
+    if (dist(g.x, g.y, x, y) < 320) {
+      g.state = 'investigate';
+      g.investigateX = x;
+      g.investigateY = y;
+      g.investigateFor = 4;
+      g.suspicion = Math.max(0, g.suspicion - 30);
     }
   }
 }
 
-function patrolStep(guard, dt, time) {
-  if (guard.kind === 'sentry') {
-    // A sentry stands its post and sweeps its cone back and forth.
-    guard.angle = guard.baseAngle + Math.sin(time * 0.9) * guard.sweep;
-    return;
-  }
-  const waypoint = guard.route[guard.routeIndex];
-  if (moveToward(guard, waypoint[0], waypoint[1], guard.speed, dt)) {
-    guard.routeIndex = (guard.routeIndex + 1) % guard.route.length;
-  }
+// Is any guard currently chasing the thief?
+export function anyChase(world) {
+  return world.guards.some((g) => g.state === 'chase');
 }
 
-/** How many guards are suspicious or alert right now (drives the alarm). */
-export function guardAlertCounts(guards) {
-  let suspicious = 0;
-  let alert = 0;
-  for (const guard of guards) {
-    if (guard.state === STATE_CHASE) alert += 1;
-    else if (guard.state === STATE_STARE) suspicious += 1;
-  }
-  return { suspicious, alert };
-}
-
-/** The nearest guard to a point, for the HUD's "nearest threat" hint. */
-export function nearestGuard(guards, x, y) {
-  let best = null;
-  let bestDist = Infinity;
-  for (const guard of guards) {
-    const d = Math.hypot(guard.x - x, guard.y - y);
-    if (d < bestDist) {
-      bestDist = d;
-      best = guard;
-    }
-  }
-  return { guard: best, distance: bestDist };
+// Is any guard able to see the thief right now?
+export function anyGuardSees(world) {
+  return world.guards.some((g) => guardSeesThief(g, world.thief, world.level.walls));
 }

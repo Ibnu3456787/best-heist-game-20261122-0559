@@ -1,94 +1,102 @@
-// THE GILDED FOX — the thief. Moves with the keys, sneaks with Shift and
-// sprints with Space, and carries the loot once it is grabbed. Movement is
-// axis-separated against the room's walls, so the thief slides along a wall
-// instead of sticking to it. Stealth state (shadow, vent, smoke, sneak,
-// sprint) is recomputed every step and read by every watcher.
-import { ROOM, THIEF } from './config.js';
+// The thief: movement, sneaking, sprinting, hiding and the lockpick.
+// The thief moves with the keyboard; Shift sneaks (slower, harder to spot),
+// Space sprints (faster, louder). Vents hide the thief completely but slow
+// the walk to a crawl. The lockpick needs the thief standing still beside
+// the case, holding E, for the full pick time.
 
-/** A fresh thief at the heist's start point. */
-export function makeThief(heist) {
+import { LOCKPICK_SECONDS, SPEEDS, THIEF_RADIUS } from './config.js';
+import { clamp, dist, pointInRect, resolveCircleRects } from './geometry.js';
+
+export function makeThief(spawn) {
   return {
-    x: heist.start.x,
-    y: heist.start.y,
-    radius: THIEF.radius,
-    facing: -Math.PI / 2,
-    moving: false,
+    x: spawn.x,
+    y: spawn.y,
+    angle: -Math.PI / 2,
     sneaking: false,
     sprinting: false,
-    inShadow: false,
+    moving: false,
+    // Hiding: inside a vent, or inside a smoke cloud.
+    hidden: false,
     inVent: false,
     inSmoke: false,
-    carrying: false,
-    lockpicking: 0, // 0..1 progress while holding E at the vault
-    lockpickTarget: null,
+    inShadow: false,
+    // Lockpick progress in seconds, 0..LOCKPICK_SECONDS.
+    pickProgress: 0,
+    picking: false,
   };
 }
 
-/** True when the circle at (x, y, r) overlaps any wall rect. */
-export function hitsWall(x, y, r, walls) {
-  for (const wall of walls) {
-    const cx = Math.max(wall.x, Math.min(x, wall.x + wall.w));
-    const cy = Math.max(wall.y, Math.min(y, wall.y + wall.h));
-    if ((x - cx) * (x - cx) + (y - cy) * (y - cy) < r * r) return true;
-  }
-  return false;
+function insideVent(thief, vents) {
+  return vents.some((v) => pointInRect(thief.x, thief.y, v));
 }
 
-/**
- * Move the thief one step from `input` ({ dx, dy, sneak, sprint }). The
- * thief object is updated in place; nothing is returned.
- */
-export function moveThief(thief, input, dt, walls) {
-  thief.sneaking = input.sneak && !input.sprint;
-  thief.sprinting = input.sprint && !input.sneak;
-  const speed = thief.inVent
-    ? THIEF.walkSpeed * 0.6
-    : thief.sneaking
-      ? THIEF.sneakSpeed
-      : thief.sprinting
-        ? THIEF.sprintSpeed
-        : THIEF.walkSpeed;
-  const len = Math.hypot(input.dx, input.dy);
+function insideShadow(thief, shadows) {
+  return shadows.some((s) => dist(thief.x, thief.y, s.x, s.y) < s.r);
+}
+
+function insideSmoke(thief, smokes) {
+  return smokes.some((s) => dist(thief.x, thief.y, s.x, s.y) < s.radius);
+}
+
+export function updateThief(world, input, dt) {
+  const thief = world.thief;
+  const level = world.level;
+
+  // Read the movement keys into a direction vector.
+  let dx = 0;
+  let dy = 0;
+  if (input.left) dx -= 1;
+  if (input.right) dx += 1;
+  if (input.up) dy -= 1;
+  if (input.down) dy += 1;
+  const len = Math.sqrt(dx * dx + dy * dy);
+  if (len > 0) {
+    dx /= len;
+    dy /= len;
+  }
   thief.moving = len > 0;
-  if (len === 0) return;
-  const nx = input.dx / len;
-  const ny = input.dy / len;
-  thief.facing = Math.atan2(ny, nx);
-  // Axis-separated: try x, then y, so walls slide instead of snag.
-  const stepX = nx * speed * dt;
-  if (!hitsWall(thief.x + stepX, thief.y, thief.radius, walls)) thief.x += stepX;
-  const stepY = ny * speed * dt;
-  if (!hitsWall(thief.x, thief.y + stepY, thief.radius, walls)) thief.y += stepY;
-  thief.x = Math.max(ROOM.minX + thief.radius, Math.min(ROOM.maxX - thief.radius, thief.x));
-  thief.y = Math.max(ROOM.minY + thief.radius, Math.min(ROOM.maxY - thief.radius, thief.y));
-}
 
-/** Refresh the thief's stealth flags from the room's shadow pools and vents. */
-export function updateThiefStealth(thief, heist, smokeClouds) {
-  thief.inShadow = false;
-  for (const pool of heist.shadows) {
-    if (Math.hypot(thief.x - pool.x, thief.y - pool.y) < pool.r) {
-      thief.inShadow = true;
-      break;
-    }
-  }
-  thief.inVent = false;
-  for (const vent of heist.vents) {
-    if (thief.x >= vent.x && thief.x <= vent.x + vent.w && thief.y >= vent.y && thief.y <= vent.y + vent.h) {
-      thief.inVent = true;
-      break;
-    }
-  }
-  thief.inSmoke = false;
-  for (const cloud of smokeClouds) {
-    if (Math.hypot(thief.x - cloud.x, thief.y - cloud.y) < cloud.radius) {
-      thief.inSmoke = true;
-      break;
-    }
-  }
-}
+  thief.sneaking = !!input.sneak;
+  thief.sprinting = !!input.sprint && !thief.sneaking;
 
-/** True when no watcher can see the thief at all right now. */
-export function thiefHidden(thief) {
-  return thief.inVent || thief.inSmoke;
+  const inVent = insideVent(thief, level.vents);
+  thief.inVent = inVent;
+  thief.inShadow = insideShadow(thief, level.shadows);
+  thief.inSmoke = insideSmoke(thief, world.smokes);
+  thief.hidden = inVent || thief.inSmoke;
+
+  let speed = thief.sprinting ? SPEEDS.sprint : thief.sneaking ? SPEEDS.sneak : SPEEDS.walk;
+  if (inVent) speed = SPEEDS.vent;
+
+  if (thief.moving) {
+    thief.angle = Math.atan2(dy, dx);
+    const nx = thief.x + dx * speed * dt;
+    const ny = thief.y + dy * speed * dt;
+    const fixed = resolveCircleRects(nx, ny, THIEF_RADIUS, level.walls);
+    thief.x = clamp(fixed.x, 10 + THIEF_RADIUS, 1270 - THIEF_RADIUS);
+    thief.y = clamp(fixed.y, 74 + THIEF_RADIUS, 724 - THIEF_RADIUS);
+  }
+
+  // Lockpick: hold E, standing still, beside the case.
+  const c = level.casePos;
+  const caseCx = c.x + c.w / 2;
+  const caseCy = c.y + c.h / 2;
+  const nearCase = dist(thief.x, thief.y, caseCx, caseCy) < 78;
+  thief.picking = false;
+  if (world.lootSecured) {
+    thief.pickProgress = LOCKPICK_SECONDS;
+  } else if (nearCase && input.pick && !thief.moving) {
+    thief.picking = true;
+    thief.pickProgress += dt;
+    if (thief.pickProgress >= LOCKPICK_SECONDS) {
+      world.lootSecured = true;
+      world.events.push({ type: 'loot' });
+      world.banner = {
+        text: `${level.prize.toUpperCase()} SECURED — GET TO THE EXIT!`,
+        until: world.time + 3,
+      };
+    }
+  } else {
+    thief.pickProgress = Math.max(0, thief.pickProgress - dt * 2);
+  }
 }

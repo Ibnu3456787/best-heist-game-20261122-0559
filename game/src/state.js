@@ -1,66 +1,96 @@
-// THE GILDED FOX — app state: which screen is showing, which mode and
-// heist are selected, and how the campaign totals up. The simulation owns
-// the heist; this owns everything around it.
-import { HEISTS } from './heists.js';
+// Game state: the screen machine above the simulation, plus the campaign.
+// One campaign is three heists in a row; the payout of each job banks into
+// the campaign total, and the rank is read from that total. The best
+// campaign is kept in localStorage when the browser has it.
 
-export const SCREEN_TITLE = 'title';
-export const SCREEN_BRIEFING = 'briefing';
-export const SCREEN_PLAY = 'play';
-export const SCREEN_PAUSED = 'paused';
-export const SCREEN_ESCAPED = 'escaped';
-export const SCREEN_BUSTED = 'busted';
-export const SCREEN_VICTORY = 'victory';
+import { HEISTS, rankFor } from './config.js';
+import { createWorld } from './world.js';
 
-const BEST_KEY = 'gilded-fox-best';
+export const BEST_KEY = 'gilded-fox-best-campaign';
 
-/** The app's top-level state, fresh for a new visit. */
-export function makeAppState() {
-  return {
-    screen: SCREEN_TITLE,
-    mode: 'standard', // 'standard' | 'ghost'
-    heistIndex: 0,
-    selectedHeist: 0,
-    totalScore: 0,
-    completed: [false, false, false],
-    best: readBest(),
-    muted: false,
-  };
-}
-
-export function readBest() {
+export function loadBest() {
   try {
-    const raw = globalThis.localStorage?.getItem(BEST_KEY);
-    const value = raw === null || raw === undefined ? 0 : Number.parseInt(raw, 10);
-    return Number.isFinite(value) ? value : 0;
+    const raw = window.localStorage.getItem(BEST_KEY);
+    const n = raw === null ? 0 : Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
   } catch {
     return 0;
   }
 }
 
-export function writeBest(value) {
+export function saveBest(total) {
   try {
-    globalThis.localStorage?.setItem(BEST_KEY, String(value));
+    window.localStorage.setItem(BEST_KEY, String(total));
   } catch {
-    // Private mode or no storage: the score just does not persist.
+    // No storage (private mode, headless): the campaign still plays.
   }
 }
 
-/** The heist the player is about to play. */
-export function currentHeist(app) {
-  return HEISTS[app.heistIndex];
+// A fresh game: title screen, no heist chosen yet.
+export function createGame() {
+  return {
+    screen: 'title', // 'title' | 'playing' | 'payout' | 'busted' | 'paused'
+    mode: 'standard',
+    heistIndex: 1,
+    world: null,
+    campaign: [],
+    campaignTotal: 0,
+    bestCampaign: loadBest(),
+    muted: false,
+    // The busted screen's reason, set when a world ends badly.
+    bustReason: null,
+    bustGuard: null,
+    // Which job card the title screen highlights (keyboard).
+    titleSelection: 1,
+    // Title-screen animation clock.
+    titleTime: 0,
+  };
 }
 
-/** True when every heist in the campaign is complete. */
-export function campaignComplete(app) {
-  return app.completed.every(Boolean);
+export function startHeist(game, heistIndex, mode) {
+  game.heistIndex = heistIndex;
+  game.mode = mode || game.mode;
+  game.world = createWorld(heistIndex, game.mode, 9000 + heistIndex * 131);
+  game.screen = 'playing';
+  game.bustReason = null;
+  game.bustGuard = null;
 }
 
-/** Record an escape: bank the payout and mark the heist done. */
-export function bankEscape(app, result) {
-  app.totalScore += result.total;
-  app.completed[app.heistIndex] = true;
-  if (app.totalScore > app.best) {
-    app.best = app.totalScore;
-    writeBest(app.best);
+// Bank the finished world's payout into the campaign and move on.
+export function bankPayout(game) {
+  const payout = game.world.payout;
+  game.campaign.push({ heist: game.heistIndex, payout });
+  game.campaignTotal += payout.total;
+  if (game.campaignTotal > game.bestCampaign) {
+    game.bestCampaign = game.campaignTotal;
+    saveBest(game.bestCampaign);
   }
+  game.screen = 'payout';
+}
+
+// Record a bust, then show the busted screen.
+export function recordBust(game) {
+  game.bustReason = game.world.bustReason;
+  game.bustGuard = game.world.bustGuard;
+  game.screen = 'busted';
+}
+
+// Is there a next job in the campaign?
+export function hasNextHeist(game) {
+  return game.heistIndex < HEISTS.length - 1;
+}
+
+export function nextHeist(game) {
+  startHeist(game, game.heistIndex + 1, game.mode);
+}
+
+export function campaignRank(game) {
+  return rankFor(game.campaignTotal);
+}
+
+export function backToTitle(game) {
+  game.screen = 'title';
+  game.world = null;
+  game.campaign = [];
+  game.campaignTotal = 0;
 }
